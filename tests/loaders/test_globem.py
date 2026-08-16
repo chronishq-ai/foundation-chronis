@@ -34,9 +34,7 @@ def create_fixture(root: Path) -> Path:
 def test_globem_loader_returns_dataset(tmp_path: Path) -> None:
     source = create_fixture(tmp_path)
 
-    dataset = GlobemLoader().load(
-        LoaderConfig(source_path=source)
-    )
+    dataset = GlobemLoader().load(LoaderConfig(source_path=source))
 
     assert len(dataset.records) == 4
 
@@ -46,15 +44,12 @@ def test_globem_preserves_missing_value(
 ) -> None:
     source = create_fixture(tmp_path)
 
-    dataset = GlobemLoader().load(
-        LoaderConfig(source_path=source)
-    )
+    dataset = GlobemLoader().load(LoaderConfig(source_path=source))
 
     missing = [
         record
         for record in dataset.records
-        if record.feature_name == "step_count"
-        and record.status is MeasurementStatus.MISSING
+        if record.feature_name == "step_count" and record.status is MeasurementStatus.MISSING
     ]
 
     assert len(missing) == 1

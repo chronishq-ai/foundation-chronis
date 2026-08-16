@@ -54,9 +54,7 @@ class GlobemLoader:
     def load(self, config: LoaderConfig) -> ChronisDataset:
         """Load all supported GLOBEM feature files."""
 
-        feature_directory = self._resolve_feature_directory(
-            config.source_path
-        )
+        feature_directory = self._resolve_feature_directory(config.source_path)
 
         records = []
         metadata = {}
@@ -103,17 +101,14 @@ class GlobemLoader:
         if candidate.is_dir():
             return candidate
 
-        raise FileNotFoundError(
-            f"FeatureData directory not found under {source_path}"
-        )
+        raise FileNotFoundError(f"FeatureData directory not found under {source_path}")
 
     def _parse_file(
-    self,
-    frame: pd.DataFrame,
-    filename: str,
-    config: LoaderConfig,
-) -> tuple[list[FeatureRecord], list[FeatureMetadata]]:
-        
+        self,
+        frame: pd.DataFrame,
+        filename: str,
+        config: LoaderConfig,
+    ) -> tuple[list[FeatureRecord], list[FeatureMetadata]]:
         """Convert one GLOBEM feature file."""
 
         required_columns = {"pid", "date"}
@@ -121,18 +116,11 @@ class GlobemLoader:
         missing = required_columns - set(frame.columns)
 
         if missing:
-            raise ValueError(
-                f"{filename} is missing required columns: "
-                f"{sorted(missing)}"
-            )
+            raise ValueError(f"{filename} is missing required columns: {sorted(missing)}")
 
         modality = self.MODALITY_MAP[filename]
 
-        feature_columns = [
-            column
-            for column in frame.columns
-            if column not in {"pid", "date"}
-        ]
+        feature_columns = [column for column in frame.columns if column not in {"pid", "date"}]
 
         metadata = [
             FeatureMetadata(
@@ -148,10 +136,7 @@ class GlobemLoader:
         for row in frame.itertuples(index=False):
             user_id = str(row.pid)
 
-            if (
-                config.user_ids is not None
-                and user_id not in config.user_ids
-            ):
+            if config.user_ids is not None and user_id not in config.user_ids:
                 continue
 
             timestamp = parse_timestamp(row.date)

@@ -21,11 +21,6 @@ class TilesLoader:
         """
 
         if not config.source_path.exists():
-            raise FileNotFoundError(
-                f"TILES source path does not exist: "
-                f"{config.source_path}"
-            )
+            raise FileNotFoundError(f"TILES source path does not exist: {config.source_path}")
 
-        raise NotImplementedError(
-            "TILES-2018 field mapping has not yet been configured."
-        )
+        raise NotImplementedError("TILES-2018 field mapping has not yet been configured.")
