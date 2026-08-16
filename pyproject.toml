@@ -8,12 +8,14 @@ packages = [{ include = "chronis_ml", from = "src" }]
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.12"
+pandas = "^3.0.5"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.4"
 mypy = "^1.17"
 pre-commit = "^4.3"
 ruff = "^0.12"
+pandas-stubs = "^3.0.5.260730"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

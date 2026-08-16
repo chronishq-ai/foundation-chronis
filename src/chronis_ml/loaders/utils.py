@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
+from typing import cast
 
 import pandas as pd
 
@@ -16,7 +17,12 @@ from chronis_ml.schema.models import (
 def parse_timestamp(value: object) -> datetime:
     """Convert a source timestamp into a timezone-aware datetime."""
 
-    timestamp = pd.to_datetime(value, utc=True)
+    timestamp_input = cast(
+        str | float | int | date | datetime,
+        value,
+    )
+
+    timestamp = pd.to_datetime(timestamp_input, utc=True)
 
     if not isinstance(timestamp, pd.Timestamp):
         raise ValueError(f"Unable to parse timestamp: {value!r}")

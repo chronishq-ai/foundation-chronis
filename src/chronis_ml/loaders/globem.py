@@ -16,6 +16,7 @@ from chronis_ml.loaders.utils import (
 from chronis_ml.schema.models import (
     ChronisDataset,
     FeatureMetadata,
+    FeatureRecord,
     MissingReason,
 )
 from chronis_ml.schema.validation import validate_dataset
@@ -107,11 +108,12 @@ class GlobemLoader:
         )
 
     def _parse_file(
-        self,
-        frame: pd.DataFrame,
-        filename: str,
-        config: LoaderConfig,
-    ):
+    self,
+    frame: pd.DataFrame,
+    filename: str,
+    config: LoaderConfig,
+) -> tuple[list[FeatureRecord], list[FeatureMetadata]]:
+        
         """Convert one GLOBEM feature file."""
 
         required_columns = {"pid", "date"}
