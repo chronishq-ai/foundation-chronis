@@ -8,8 +8,6 @@ __pycache__/
 venv/
 ENV/
 
-# Poetry
-
 # Test / coverage
 .pytest_cache/
 .coverage
@@ -36,6 +34,10 @@ Thumbs.db
 # Data - do not commit raw or decrypted sensor/audio data
 data/raw/
 data/decrypted/
+data/external/
+data/processed/
+
+# Media / sensor files
 *.wav
 *.flac
 *.mp3
