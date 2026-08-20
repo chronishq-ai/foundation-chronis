@@ -131,18 +131,24 @@ class GlobemLoader:
             for column in feature_columns
         ]
 
-        records = []
+        records: list[FeatureRecord] = []
 
-        for row in frame.itertuples(index=False):
-            user_id = str(row.pid)
+        # NOTE: iterate via to_dict(orient="records") rather than itertuples().
+        # itertuples() silently renames any column that is not a valid Python
+        # identifier (spaces, slashes, leading digits, etc.) to a positional
+        # name like "_1", which breaks getattr(row, column) lookups without
+        # raising an obvious error. Dict-based row access preserves the exact
+        # source column name regardless of its shape.
+        for row in frame.to_dict(orient="records"):
+            user_id = str(row["pid"])
 
             if config.user_ids is not None and user_id not in config.user_ids:
                 continue
 
-            timestamp = parse_timestamp(row.date)
+            timestamp = parse_timestamp(row["date"])
 
             for column in feature_columns:
-                value = getattr(row, column)
+                value = row[column]
 
                 feature_name = normalize_feature_name(column)
 
@@ -157,11 +163,19 @@ class GlobemLoader:
                         source="globem",
                     )
                 else:
+                    numeric_value = self._coerce_numeric(
+                        value=value,
+                        filename=filename,
+                        column=column,
+                        user_id=user_id,
+                        date_value=row["date"],
+                    )
+
                     record = build_observed_record(
                         user_id=user_id,
                         timestamp=timestamp,
                         feature_name=feature_name,
-                        value=float(value),
+                        value=numeric_value,
                         modality=modality,
                         unit=None,
                         source="globem",
@@ -170,3 +184,27 @@ class GlobemLoader:
                 records.append(record)
 
         return records, metadata
+
+    @staticmethod
+    def _coerce_numeric(
+        *,
+        value: object,
+        filename: str,
+        column: str,
+        user_id: str,
+        date_value: object,
+    ) -> float:
+        """Convert a non-missing cell to float, or raise a clear error.
+
+        A value that is present but cannot be interpreted as numeric (a
+        stray string, an unexpected type, etc.) is malformed data, not
+        missing data. It must never be silently coerced or dropped.
+        """
+
+        try:
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"{filename}: column {column!r} contains a non-numeric value "
+                f"{value!r} for pid={user_id!r}, date={date_value!r}"
+            ) from exc

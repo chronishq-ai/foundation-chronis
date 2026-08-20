@@ -29,11 +29,17 @@ jobs:
       - name: Install dependencies
         run: poetry install
 
-      - name: Run Ruff
+      - name: Run Ruff (lint)
         run: poetry run ruff check .
+
+      - name: Run Ruff (format check)
+        run: poetry run ruff format --check .
 
       - name: Run mypy
         run: poetry run mypy
 
       - name: Run pytest
         run: poetry run pytest
+
+      - name: Run pre-commit (all hooks)
+        run: poetry run pre-commit run --all-files

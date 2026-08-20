@@ -5,59 +5,56 @@
 Dataset loaders convert source-specific datasets into the canonical
 Chronis data representation.
 
+The loader layer provides a common interface for converting different
+dataset formats into a consistent representation that can be consumed
+by downstream Chronis ML components.
+
 ## Supported datasets
 
-- TILES-2018
-- GLOBEM
+- TILES-2018 — loader interface defined, field mapping not yet
+  implemented (`chronis_ml.loaders.tiles.TilesLoader` raises
+  `NotImplementedError`).
+- GLOBEM — implemented. Reads `rapids.csv`, `location.csv`, `screen.csv`,
+  `call.csv`, `bluetooth.csv`, `steps.csv`, `sleep.csv`, `wifi.csv` from a
+  `FeatureData` directory and converts each row/column into canonical
+  `FeatureRecord`s.
 
-## Contract
+See [missing-data.md](./missing-data.md) for how each loader represents
+missing values.
 
-Every loader implements:
+## Repository architecture
 
-    load(config) -> ChronisDataset
+The repository is organized around a canonical Chronis schema and
+dataset-specific loaders.
 
-## Loader responsibilities
-
-A loader must:
-
-1. Read approved source data.
-2. Preserve participant identifiers.
-3. Parse timestamps.
-4. Normalize feature names.
-5. Preserve source modality.
-6. Preserve missingness.
-7. Validate canonical output.
-8. Return ChronisDataset.
-
-## Missing data
-
-Missing values must never be silently converted to:
-
-- zero
-- interpolated values
-- fabricated measurements
-
-Missing data must retain an explicit missing status and typed reason.
-
-## TILES-2018
-
-TILES field mappings must be based on the approved dataset release and
-its documented schema.
-
-The loader must not guess undocumented source fields.
-
-## GLOBEM
-
-GLOBEM FeatureData is converted into the canonical Chronis representation.
-
-## Testing
-
-Dataset loaders are tested using synthetic fixtures before real
-surrogate data are processed.
-
-## Security
-
-Raw datasets must not be committed to Git.
-
-Generated or downloaded datasets must remain outside the source tree
-or inside ignored data directories.
+```text
+chronis-ml/
+├── .github/
+│   └── workflows/
+│       └── ci.yml
+├── src/
+│   └── chronis_ml/
+│       ├── loaders/
+│       │   ├── base.py
+│       │   ├── example.py
+│       │   ├── globem.py
+│       │   ├── tiles.py
+│       │   └── utils.py
+│       └── schema/
+│           ├── models.py
+│           └── validation.py
+├── tests/
+│   ├── loaders/
+│   └── schema/
+├── docs/
+│   ├── dataset-loaders.md
+│   ├── development.md
+│   ├── missing-data.md
+│   ├── phase1-checklist.md
+│   └── repository.md
+├── .env.example
+├── .gitignore
+├── .pre-commit-config.yaml
+├── README.md
+└── pyproject.toml
+```

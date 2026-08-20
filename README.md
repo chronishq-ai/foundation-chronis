@@ -67,6 +67,16 @@ poetry run pre-commit install
 poetry run pre-commit run --all-files
 ```
 
+## Documentation
+
+Further documentation lives in [`docs/`](./docs):
+
+- [`docs/repository.md`](./docs/repository.md) — repository architecture and layout
+- [`docs/dataset-loaders.md`](./docs/dataset-loaders.md) — dataset format and loader interfaces
+- [`docs/missing-data.md`](./docs/missing-data.md) — typed missing-data rules and status
+- [`docs/development.md`](./docs/development.md) — development workflow and data-safety rules
+- [`docs/phase1-checklist.md`](./docs/phase1-checklist.md) — Phase 1 scope tracking
+
 ## Development rules
 
 - Work on a feature branch.
