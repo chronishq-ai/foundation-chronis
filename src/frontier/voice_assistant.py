@@ -1,14 +1,7 @@
 from typing import Dict, Any, List
 from .interfaces.mirror import MirrorProvider
 
-class WakeWordEngine:
-    """
-    On-device wake-word engine (openWakeWord / Porcupine-class).
-    Runs entirely on-device; wake word itself is never sent to cloud.
-    """
-    def listen(self) -> bool:
-        # Mock listening for wake word
-        return True
+from .interfaces.wake_word import WakeWordProvider
 
 class IntentRouter:
     """
@@ -31,8 +24,8 @@ class IntentRouter:
         return "fallback"
 
 class VoiceAssistant:
-    def __init__(self, mirror: MirrorProvider):
-        self.wake_word_engine = WakeWordEngine()
+    def __init__(self, mirror: MirrorProvider, wake_word_provider: WakeWordProvider):
+        self.wake_word_provider = wake_word_provider
         self.intent_router = IntentRouter()
         self.mirror = mirror
 

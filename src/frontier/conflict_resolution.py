@@ -1,6 +1,7 @@
 from typing import Dict, Any, List
 from dataclasses import dataclass
-from .provenance_pipeline import Belief, Claim
+from .provenance_pipeline import Belief, ProvenanceRecord
+from .interfaces.claims_store import ClaimsStoreProvider
 
 @dataclass
 class ConflictRecord:
@@ -13,9 +14,9 @@ class ConflictManager:
     """
     Manages Memory Conflict Resolution (Sprint 20).
     """
-    def __init__(self):
+    def __init__(self, claims_store: ClaimsStoreProvider):
         self.conflicts = []
-        self.claims = {} # Mock claims store
+        self.claims_store = claims_store
 
     def resolve_contradiction(self, belief_1: Belief, belief_2: Belief) -> ConflictRecord:
         """
@@ -30,13 +31,17 @@ class ConflictManager:
         self.conflicts.append(conflict)
         return conflict
 
-    def downgrade_dependent_claims(self, conflict: ConflictRecord) -> None:
+    def downgrade_dependent_claims(self, conflict: ConflictRecord, provenance_records: List[ProvenanceRecord]) -> None:
         """
         Any Claim relying on conflicting Beliefs becomes UNCLEAR.
+        We check the provenance records to find which claims rely on the conflicting beliefs,
+        then we update their status in the claims store.
         """
-        for claim_id, claim in self.claims.items():
-            if conflict.belief_id_1 in claim.source_belief_ids or conflict.belief_id_2 in claim.source_belief_ids:
-                claim.status = "UNCLEAR"
+        for pr in provenance_records:
+            if conflict.belief_id_1 in pr.source_belief_ids or conflict.belief_id_2 in pr.source_belief_ids:
+                # Update status of the claim to UNCLEAR
+                self.claims_store.update_claim_status(pr.claim_id, "UNCLEAR")
+                pr.status = "UNCLEAR"
 
     def apply_teach_correction(self, user_id: str, episode_id: str, new_belief: Belief) -> None:
         """

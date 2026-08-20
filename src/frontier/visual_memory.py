@@ -3,7 +3,13 @@ import numpy as np
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
-# In a real environment, we'd use faiss. Using a mock class here for the interface.
+try:
+    import faiss
+    HAS_FAISS = True
+except ImportError:
+    HAS_FAISS = False
+
+# In a real environment, we'd use faiss. Using a mock class here as a fallback/test double.
 class MockFAISS:
     def __init__(self, dimension: int):
         self.dimension = dimension
@@ -33,10 +39,19 @@ class VisualMemoryIndex:
     """
     Per-user visual/episodic memory index.
     """
-    def __init__(self, user_id: str, encoder: SelfHostedCLIPEncoder):
+    def __init__(self, user_id: str, encoder: SelfHostedCLIPEncoder, index_override=None):
         self.user_id = user_id
         self.encoder = encoder
-        self.index = MockFAISS(dimension=self.encoder.dimension)
+        
+        if index_override is not None:
+            self.index = index_override
+            self._using_override = True
+        elif HAS_FAISS:
+            self.index = faiss.IndexFlatL2(self.encoder.dimension)
+            self._using_override = False
+        else:
+            raise ImportError("faiss is required for VisualMemoryIndex in production. Please install it or provide an index_override for testing.")
+            
         self.entries = [] # To store metadata alongside the FAISS index
         
     def _is_salience_l2_or_above(self, salience: str) -> bool:
@@ -67,7 +82,14 @@ class VisualMemoryIndex:
         """
         Deletes the retrieval index. By design, this has ZERO effect on Layer 0.
         """
-        self.index = MockFAISS(dimension=self.encoder.dimension)
+        # We need to know if we were using an override or real FAISS
+        if getattr(self, '_using_override', False):
+            # For tests, we just reset it to a new mock
+            self.index = MockFAISS(dimension=self.encoder.dimension)
+        elif HAS_FAISS:
+            self.index = faiss.IndexFlatL2(self.encoder.dimension)
+        else:
+            raise ImportError("faiss is required for VisualMemoryIndex in production.")
         self.entries = []
 
     def retrieve(self, query_embedding: np.ndarray, k: int = 5) -> List[Dict[str, Any]]:

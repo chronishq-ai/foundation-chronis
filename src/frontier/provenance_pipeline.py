@@ -27,10 +27,8 @@ class Belief:
     source_inference_ids: List[str]
 
 @dataclass
-class Claim:
-    id: str
-    level: int
-    content: str
+class ProvenanceRecord:
+    claim_id: str
     source_belief_ids: List[str]
     status: str = "SURFACED" # Or "UNCLEAR"
 
@@ -44,7 +42,7 @@ class ProvenanceManager:
             "behavioral_pattern": 0.70
         }
 
-    def promote_to_claim(self, belief: Belief, claim_type: str, level: int, content: str) -> Optional[Claim]:
+    def promote_to_claim(self, belief: Belief, claim_type: str, level: int, content: str) -> Optional[ProvenanceRecord]:
         """
         Hard rule: A Belief below a per-claim-type confidence floor can create an internal Inference record 
         but MUST NOT promote to Claim.
@@ -53,10 +51,8 @@ class ProvenanceManager:
         if belief.confidence < floor:
             return None
             
-        return Claim(
-            id=f"claim_{belief.id}",
-            level=level,
-            content=content,
+        return ProvenanceRecord(
+            claim_id=f"claim_{belief.id}",
             source_belief_ids=[belief.id]
         )
 

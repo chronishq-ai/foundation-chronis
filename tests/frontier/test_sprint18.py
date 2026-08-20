@@ -20,11 +20,18 @@ def test_central_retrieval_routing():
     res = core.retrieve("query", "past", "assistant", "user1", {"consent_tier": 2})
     assert len(res.get("evidence_items", [])) == 1
 
+from src.frontier.interfaces.llm import LLMProvider
+
+class MockLLMProvider(LLMProvider):
+    def generate(self, prompt: str) -> str:
+        return "Mock answer for general knowledge query."
+
 def test_mixed_query_composition():
     """Validates personal/general knowledge tagging (Sprint 18)."""
     orchestrator = MemoryOrchestrator(DummyVisualRetrieval())
     core = CentralRetrievalCore(orchestrator)
-    assistant = MultimodalAssistant(core)
+    llm = MockLLMProvider()
+    assistant = MultimodalAssistant(core, llm)
     
     res = assistant.resolve_query("user1", "where are my keys?", "mixed_query")
     assert "[PERSONAL_EVIDENCE]" in res

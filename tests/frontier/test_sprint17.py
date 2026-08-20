@@ -25,10 +25,17 @@ def test_class_a_b_boundary_enforcement():
             all_artifacts
         )
 
+from src.frontier.interfaces.wake_word import WakeWordProvider
+
+class MockWakeWordProvider(WakeWordProvider):
+    def listen(self):
+        return True
+
 def test_voice_routing():
     """Validates voice assistant routing (Sprint 17)."""
     mirror = MockMirrorProvider()
-    assistant = VoiceAssistant(mirror)
+    wake_word = MockWakeWordProvider()
+    assistant = VoiceAssistant(mirror=mirror, wake_word_provider=wake_word)
     
     assert "visual/temporal" in assistant.process_query("user1", "have I been here before?").lower()
     assert "explain" in assistant.process_query("user1", "explain this to me").lower()

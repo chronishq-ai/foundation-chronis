@@ -1,19 +1,22 @@
 from typing import Dict, Any, List
 
+from .interfaces.llm import LLMProvider
+
 class MultimodalAssistant:
     """
     Multimodal Assistant (Sprint 18).
     Extends the intent router with `general_knowledge` and explicit mixed-query composition.
     """
-    def __init__(self, retrieval_core):
+    def __init__(self, retrieval_core, llm_provider: LLMProvider):
         self.retrieval_core = retrieval_core
+        self.llm_provider = llm_provider
 
     def _route_general_knowledge(self, query: str) -> str:
         """
         The ONLY path permitted to call the general-purpose LLM without going through CentralRetrievalCore.
         """
-        # Mock LLM call
-        return "[GENERAL_KNOWLEDGE] Mock answer for general knowledge query."
+        response = self.llm_provider.generate(query)
+        return f"[GENERAL_KNOWLEDGE] {response}"
 
     def resolve_query(self, user_id: str, query: str, intent: str, live_camera_embedding=None) -> str:
         """
