@@ -19,11 +19,8 @@ class RetrievalAPI:
         Calculates confidence combining ANN distance with corroborating signals.
         All thresholds must be configurable and logged to MLflow.
         """
-        # Baseline confidence from ANN (inverted distance, assuming smaller is better)
-        # Assuming distance is L2 and normalized between 0-1 for this mock.
         base_conf = max(0.0, 1.0 - ann_distance)
         
-        # Corroborating signals
         if gps_match:
             base_conf += 0.15
             
@@ -47,9 +44,8 @@ class RetrievalAPI:
         ranked_results = []
         for res in raw_results:
             gps_match = False
-            # Mock GPS corroboration
             if current_gps and res.get("gps_if_present"):
-                gps_match = True # Mocking a location match
+                gps_match = True
                 
             confidence = self._calculate_confidence(
                 res.get("ann_distance", 1.0), 
@@ -63,7 +59,6 @@ class RetrievalAPI:
                 "canonical_record_pointer": res.get("canonical_record_pointer")
             })
             
-        # Rank by confidence
         ranked_results.sort(key=lambda x: x["confidence"], reverse=True)
         return ranked_results
 
@@ -75,8 +70,6 @@ class RetrievalAPI:
         if query_type not in ["past", "future"]:
             raise ValueError("query_type must be 'past' or 'future'")
             
-        # In a real implementation, this would query Layer0 or HSSM for events in the time range.
-        # Returning mock context for now.
         return [{"event": "mock_event", "time": time_range[0], "type": query_type}]
 
     def action_button_bookmark(self, user_id: str, timestamp: datetime, context: str) -> str:

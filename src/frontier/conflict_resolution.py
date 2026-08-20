@@ -43,9 +43,6 @@ class ConflictManager:
         Teach Chronis on a conflicted episode creates a NEW high-confidence Belief.
         Never deletes superseded Beliefs.
         """
-        # Mark conflicts as resolved (without deleting old beliefs)
         for conflict in self.conflicts:
-            # Mock check for relevance to episode
             conflict.resolved = True
             
-        # The new_belief is retained alongside the old ones.

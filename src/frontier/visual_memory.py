@@ -52,7 +52,6 @@ class VisualMemoryIndex:
             if self._is_salience_l2_or_above(salience):
                 embedding = self.encoder.encode(frame.get("frame_data"))
                 
-                # The index entry MUST be a pointer back to Layer 0, NEVER a decrypted copy of the frame
                 entry = {
                     "canonical_record_pointer": frame.get("canonical_record_pointer"),
                     "timestamp_ntp": frame.get("timestamp_ntp"),
@@ -61,8 +60,6 @@ class VisualMemoryIndex:
                     "cse_inputs": frame.get("cse_inputs")
                 }
                 
-                # Add to FAISS index
-                # Reshape for faiss which expects 2D array
                 self.index.add(np.expand_dims(embedding, axis=0))
                 self.entries.append(entry)
 

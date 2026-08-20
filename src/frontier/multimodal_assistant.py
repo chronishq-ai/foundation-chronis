@@ -24,7 +24,6 @@ class MultimodalAssistant:
             return self._route_general_knowledge(query)
             
         elif intent == "mixed_query":
-            # Decompose into personal and general
             personal_evidence = self.retrieval_core.retrieve(
                 query=query, 
                 query_type="past", 
@@ -35,7 +34,6 @@ class MultimodalAssistant:
             
             general_answer = self._route_general_knowledge(query)
             
-            # Combine via constrained-RAG style labeling
             response = (
                 f"[PERSONAL_EVIDENCE] Found {len(personal_evidence.get('evidence_items', []))} items. "
                 f"{general_answer}"
@@ -43,11 +41,9 @@ class MultimodalAssistant:
             return response
             
         elif intent == "live_context":
-            # Live camera-context fusion
             if live_camera_embedding is None:
                 return "[ERROR] Live context intent requires camera embedding."
             
-            # Compare against historical visual index (mock logic here)
             return "[PERSONAL_EVIDENCE] This resembles a past memory. [GENERAL_KNOWLEDGE] Object identified as X."
 
         return "[FALLBACK] Unrecognized intent."

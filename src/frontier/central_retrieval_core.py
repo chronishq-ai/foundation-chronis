@@ -14,11 +14,9 @@ class CentralRetrievalCore:
         Contract: {query, query_type, requesting_interface, user_id, consent_context}
         Returns a single ranked EvidencePackage.
         """
-        # Validate consent context
         if consent_context.get("consent_tier", 0) < 2:
             return {"error": "Insufficient consent tier for retrieval"}
             
-        # Route through MemoryOrchestrator
         evidence_package = self.orchestrator.orchestrate(
             user_id=user_id,
             query=query,
