@@ -18,6 +18,8 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
+from sklearn.decomposition import PCA
+
 
 
 @dataclass(frozen=True)
@@ -204,3 +206,99 @@ def reduce_features(
         dropped_features=dropped_features,
         report=report,
     )
+
+
+# ---------- Teammate's Functions supporting Missing Sessions ----------
+
+def per_person_zscore(X: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Z-score each feature column using THIS person's own mean/std only.
+    NaN rows (missing sessions) are ignored for mean/std and remain NaN in output
+    (marginalized later by the HSSM's gating/emission logic, never imputed here)."""
+    mean = np.nanmean(X, axis=0)
+    std = np.nanstd(X, axis=0)
+    std[std == 0] = 1.0
+    Z = (X - mean) / std
+    return Z, mean, std
+
+
+def _compute_vif_numpy(X: np.ndarray) -> np.ndarray:
+    n_feat = X.shape[1]
+    vifs = np.zeros(n_feat)
+    corr = np.corrcoef(X, rowvar=False)
+    try:
+        inv_corr = np.linalg.inv(corr)
+        vifs = np.diag(inv_corr)
+    except np.linalg.LinAlgError:
+        for i in range(n_feat):
+            others = [j for j in range(n_feat) if j != i]
+            r2 = max(corr[i, j] ** 2 for j in others) if others else 0.0
+            vifs[i] = 1.0 / max(1e-6, (1 - r2))
+    return vifs
+
+
+def remove_high_vif(X: np.ndarray, feature_names: list[str], vif_threshold: float = 10.0):
+    """Iteratively drop the feature with highest VIF until all remaining are below
+    threshold, or we hit the floor of 8 features (target minimum dims)."""
+    df = pd.DataFrame(X, columns=feature_names).dropna()
+    if len(df) < len(feature_names) + 2:
+        raise ValueError(
+            f"Not enough complete-case rows ({len(df)}) to compute VIF for "
+            f"{len(feature_names)} features."
+        )
+
+    remaining = list(feature_names)
+    dropped = []
+    while len(remaining) > 8:
+        vifs = _compute_vif_numpy(df[remaining].values)
+        max_vif_idx = int(np.argmax(vifs))
+        max_vif = vifs[max_vif_idx]
+        if max_vif < vif_threshold:
+            break
+        dropped_feat = remaining.pop(max_vif_idx)
+        dropped.append((dropped_feat, max_vif))
+    return remaining, dropped
+
+
+def reduce_dimensionality(
+    Z: np.ndarray,
+    feature_names: list[str],
+    target_dims: int = 12,
+    min_dims: int = 8,
+    max_dims: int = 15,
+):
+    """PCA reduction to target_dims (clamped to [min_dims, max_dims]).
+    Fit on complete-case rows; rows with any raw NaN remain NaN in reduced space
+    (reduced-space missingness is what the HSSM gating marginalizes, not raw-space)."""
+    target_dims = int(np.clip(target_dims, min_dims, min(max_dims, Z.shape[1])))
+
+    complete_mask = ~np.isnan(Z).any(axis=1)
+    if complete_mask.sum() < target_dims + 2:
+        raise ValueError("Not enough complete-case rows to fit PCA reliably.")
+
+    pca = PCA(n_components=target_dims, random_state=0)
+    pca.fit(Z[complete_mask])
+
+    Z_reduced = np.full((Z.shape[0], target_dims), np.nan)
+    Z_reduced[complete_mask] = pca.transform(Z[complete_mask])
+
+    loadings = pd.DataFrame(
+        pca.components_.T, index=feature_names,
+        columns=[f"PC{i+1}" for i in range(target_dims)],
+    )
+    top_loadings = {
+        col: loadings[col].abs().sort_values(ascending=False).index[:5].tolist()
+        for col in loadings.columns
+    }
+
+    report = {
+        "explained_variance_ratio": pca.explained_variance_ratio_.tolist(),
+        "cumulative_variance": float(np.sum(pca.explained_variance_ratio_)),
+        "top5_loading_features_per_component": top_loadings,
+        "n_components": target_dims,
+        "caveat": (
+            "Components are PCA directions, not interpretable psychological axes. "
+            "Loadings show which raw features contribute most to each direction."
+        ),
+    }
+    return Z_reduced, pca, report
+

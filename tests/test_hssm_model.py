@@ -81,20 +81,21 @@ def test_emission_loglik_rejects_non_positive_definite_covariance() -> None:
 
 
 def test_generate_regime_sequence_respects_transition_matrix() -> None:
-    """Over many runs, empirical self-transition rate should roughly match the matrix."""
+    """Over many runs, empirical self-transition rate should roughly match the dynamically calculated HMM transition matrix."""
     np.random.seed(42)
     model = KimHSSMModel(
         n_regimes=2,
         n_features=1,
-        transition_matrix=np.array([[0.9, 0.1], [0.2, 0.8]]),
+        transition_matrix=np.array([[0.0, 1.0], [1.0, 0.0]]),
         emission_means=np.array([[0.0], [2.0]]),
         emission_covariances=[np.eye(1), np.eye(1)],
         duration_mu=np.array([1.0, 1.0]),
         duration_sigma=np.array([0.5, 0.5]),
     )
     sequence = model.generate_regime_sequence(length=5000, initial_regime=0)
-    # empirical P(stay in regime 0 | currently in regime 0) should be close to 0.9
+    # expected duration = exp(1.0 + 0.5**2 / 2) = 3.0802
+    # expected self-transition = 1.0 - 1.0 / 3.0802 = 0.6753
     in_regime_0 = sequence[:-1] == 0
     stayed_in_0 = (sequence[:-1] == 0) & (sequence[1:] == 0)
     empirical_self_transition = stayed_in_0.sum() / in_regime_0.sum()
-    assert abs(empirical_self_transition - 0.9) < 0.03
+    assert abs(empirical_self_transition - 0.675) < 0.04

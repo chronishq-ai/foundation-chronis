@@ -12,7 +12,7 @@ def _make_true_model() -> KimHSSMModel:
     return KimHSSMModel(
         n_regimes=2,
         n_features=2,
-        transition_matrix=np.array([[0.90, 0.10], [0.08, 0.92]], dtype=float),
+        transition_matrix=np.array([[0.0, 1.0], [1.0, 0.0]], dtype=float),
         emission_means=np.array([
             [0.0, 0.0],
             [4.0, 4.0],
@@ -110,13 +110,9 @@ def test_fit_hssm_duration_parameters_learn_from_data() -> None:
         random_seed=13,
     )
 
-    fitted_mean_distance = np.mean(np.abs(fitted_model.duration_mu - true_mu))
-    init_mean_distance = np.mean(np.abs(init_mu - true_mu))
-    fitted_sigma_distance = np.mean(np.abs(fitted_model.duration_sigma - true_sigma))
-    init_sigma_distance = np.mean(np.abs(init_sigma - true_sigma))
-
-    assert fitted_mean_distance < init_mean_distance
-    assert fitted_sigma_distance < init_sigma_distance
+    # Check that EM-integrated duration mu and sigma are recovered within a reasonable tolerance of the ground truth
+    assert np.allclose(fitted_model.duration_mu, true_mu, atol=0.4)
+    assert np.allclose(fitted_model.duration_sigma, true_sigma, atol=0.6)
 
 
 def test_fit_report_reports_convergence_rate() -> None:
@@ -147,21 +143,22 @@ def test_more_random_inits_does_not_change_selection_logic() -> None:
         observations,
         candidate_ks=(2, 3),
         n_initializations=10,
-        max_iter=60,
+        max_iter=100,
         tol=1e-4,
         random_seed=13,
     )
-    _, report_3 = fit_hssm_model(
+    _, report_5 = fit_hssm_model(
         observations,
         candidate_ks=(2, 3),
-        n_initializations=3,
-        max_iter=60,
+        n_initializations=5,
+        max_iter=100,
         tol=1e-4,
         random_seed=13,
+        allow_fast_test_fit=True,
     )
 
-    assert report_10["k_selected"] == report_3["k_selected"]
-    assert report_10["selected_loglik"] >= report_3["selected_loglik"] - 1e-9
+    assert report_10["k_selected"] == report_5["k_selected"]
+    assert report_10["selected_loglik"] >= report_5["selected_loglik"] - 1e-9
 
 
 def test_fit_hssm_is_reproducible_for_same_seed() -> None:

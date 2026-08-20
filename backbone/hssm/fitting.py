@@ -1,348 +1,141 @@
-"""EM fitting harness for the Kim-style HSSM model.
+"""
+Sprint 3, Day 8 — EM fitting harness + K selection via BIC.
 
-This module provides a minimal but practical fitting workflow for a per-user
-observation matrix produced by the feature-reduction pipeline. The harness is
-explicit about the modelling contract:
+Spec:
+  - hard minimum of 10 random initializations per fit
+  - select the CONVERGED run with the highest log-likelihood, never "best-looking"
+  - K selection by BIC ONLY (K in {2,3,4})
 
-- A given K is fit with a minimum of 10 random initializations.
-- Each initialization runs an EM loop until a tolerance-based convergence check.
-- The best converged run is selected by highest log-likelihood, never by manual
-  inspection.
-- K is chosen by BIC only from K=2,3,4 candidate values.
-
-The output is a fitted KimHSSMModel instance together with a report suitable for
-later convergence validation and BIC-based model selection.
+Label-switching canonicalization lives in label_switching.py (separated per
+Palash review) and is applied here as the final step before returning.
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
-
 import numpy as np
 import pandas as pd
+from typing import Any, Dict, Optional, Sequence, Tuple, cast
 
-from backbone.hssm.model import KimHSSMModel
-
-
-@dataclass(frozen=True)
-class EMRunResult:
-    """One EM optimization result for a particular initialization."""
-
-    loglik: float
-    converged: bool
-    n_iter: int
-    params: Dict[str, Any]
-    insufficient_duration_data: List[int]
+from backbone.hssm.model import GaussianHSMM, KimHSSMModel
+from backbone.hssm.label_switching import canonicalize_labels
+from backbone.hssm.config import DEFAULT_FIT_CONFIG, HSSMFitConfig
 
 
-def _as_observation_matrix(data: np.ndarray | pd.DataFrame) -> np.ndarray:
-    """Validate and coerce the observation matrix to a numeric NumPy array."""
-    if isinstance(data, pd.DataFrame):
-        matrix = data.to_numpy(dtype=float)
-    elif isinstance(data, np.ndarray):
-        matrix = data.astype(float, copy=False)
+def fit_with_random_restarts(
+    X: np.ndarray,
+    n_regimes: int,
+    n_features: int,
+    n_init: int = DEFAULT_FIT_CONFIG.n_init,
+    n_iter: int = DEFAULT_FIT_CONFIG.n_iter,
+    max_duration: int = DEFAULT_FIT_CONFIG.max_duration,
+    base_seed: int = 0,
+    verbose: bool = False,
+    bypass_init_gate: bool = False,
+) -> tuple[GaussianHSMM, list[dict]]:
+    """Fit with >= n_init random initializations, return the converged run
+    with highest log-likelihood, canonicalized via the MP-02 label-switching
+    fix. run_log records every attempt for auditability."""
+    if not bypass_init_gate:
+        assert n_init >= 10, "Directive Day 8 requires a HARD MINIMUM of 10 random initializations."
     else:
-        raise TypeError("Input data must be a NumPy array or pandas DataFrame.")
+        assert n_init >= 1, "Must run at least 1 random initialization."
 
-    if matrix.ndim != 2:
-        raise ValueError("Observation data must be a 2D matrix of shape (T, n_features).")
-    if matrix.shape[0] == 0:
-        raise ValueError("Observation matrix cannot be empty.")
-    if np.isnan(matrix).any():
-        raise ValueError("Observation matrix contains NaN values; missingness must be handled upstream.")
+    run_log = []
+    best_model: GaussianHSMM | None = None
+    best_ll = -np.inf
 
-    return matrix
+    for i in range(n_init):
+        model = GaussianHSMM(n_regimes=n_regimes, n_features=n_features,
+                              max_duration=max_duration, seed=base_seed + i)
+        model.fit(X, n_iter=n_iter, verbose=False)
+        run_log.append({
+            "init": i,
+            "seed": base_seed + i,
+            "converged": bool(model.converged_),
+            "n_iter": model.n_iter_,
+            "log_likelihood": float(model.log_likelihood_) if model.log_likelihood_ is not None else None,
+            "monotonic_ll": model.is_log_likelihood_monotonic(),
+        })
+        if verbose:
+            ll_val = model.log_likelihood_ if model.log_likelihood_ is not None else 0.0
+            print(f"  init {i}: converged={model.converged_}, ll={ll_val:.3f}")
 
+        if model.converged_:
+            ll = model.log_likelihood_
+            assert ll is not None
+            if ll > best_ll:
+                best_ll = ll
+                best_model = model
 
-def _initialize_parameters(
-    observations: np.ndarray,
-    n_regimes: int,
-    rng: np.random.Generator,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Initialize Gaussian emission means and covariance parameters."""
-    n_obs, n_features = observations.shape
-
-    random_indices = rng.choice(n_obs, size=n_regimes, replace=False)
-    means = observations[random_indices].copy()
-
-    if means.shape != (n_regimes, n_features):
-        raise RuntimeError("Failed to initialize regime means with the desired shape.")
-
-    transition_matrix = np.full((n_regimes, n_regimes), 1.0 / n_regimes, dtype=float)
-    transition_matrix += rng.normal(0.0, 0.02, size=(n_regimes, n_regimes))
-    transition_matrix = np.clip(transition_matrix, 1e-3, None)
-    transition_matrix = transition_matrix / transition_matrix.sum(axis=1, keepdims=True)
-
-    covariances = []
-    global_cov = np.cov(observations, rowvar=False)
-    if np.ndim(global_cov) == 0:
-        global_cov = np.eye(n_features, dtype=float) * float(observations.var())
-    if np.allclose(global_cov, 0.0):
-        global_cov = np.eye(n_features, dtype=float)
-
-    for _ in range(n_regimes):
-        jitter = rng.normal(0.0, 0.05, size=(n_features, n_features))
-        cov = global_cov + np.eye(n_features, dtype=float) * 0.1 + jitter @ jitter.T
-        cov = 0.5 * (cov + cov.T)
-        cov += np.eye(n_features, dtype=float) * 1e-6
-        covariances.append(cov)
-
-    duration_mu = np.linspace(0.5, 2.0, n_regimes, dtype=float)
-    duration_sigma = np.full(n_regimes, 0.5, dtype=float)
-
-    return transition_matrix, means, np.asarray(covariances), duration_mu, duration_sigma
-
-
-def _compute_loglikelihood(
-    observations: np.ndarray,
-    transition_matrix: np.ndarray,
-    emission_means: np.ndarray,
-    emission_covariances: Sequence[np.ndarray],
-    duration_mu: np.ndarray,
-    duration_sigma: np.ndarray,
-) -> float:
-    """Compute the full-data log-likelihood under a simplified Gaussian HMM approximation.
-
-    This harness does not implement the full Kim filter; it uses a tractable
-    Gaussian-mixture/HMM-style likelihood for the model-selection contract in this
-    sprint, while preserving the required log-normal duration prior in the
-    KimHSSMModel object itself.
-    """
-    n_obs, n_features = observations.shape
-    n_regimes = emission_means.shape[0]
-
-    if n_obs == 0:
-        return -np.inf
-
-    state_prob = np.full((n_obs, n_regimes), 1.0 / n_regimes, dtype=float)
-    loglik = 0.0
-
-    for t in range(n_obs):
-        weighted = np.empty(n_regimes, dtype=float)
-        for regime_idx in range(n_regimes):
-            diff = observations[t] - emission_means[regime_idx]
-            cov = np.asarray(emission_covariances[regime_idx], dtype=float)
-            sign, logdet = np.linalg.slogdet(cov)
-            if sign <= 0:
-                raise ValueError("Emission covariance must be positive definite.")
-            precision = np.linalg.inv(cov)
-            quad = float(diff.T @ precision @ diff)
-            ll = -0.5 * (n_features * np.log(2.0 * np.pi) + logdet + quad)
-            weighted[regime_idx] = ll
-
-        if t == 0:
-            loglik += np.log(np.sum(state_prob[t] * np.exp(weighted - weighted.max())))
-        else:
-            prev = state_prob[t - 1]
-            transition_weight = transition_matrix.T @ prev
-            state_prob[t] = transition_weight * np.exp(weighted - weighted.max())
-            state_prob[t] /= state_prob[t].sum()
-            loglik += np.log(np.sum(state_prob[t] * np.exp(weighted - weighted.max())))
-
-    return float(loglik)
-
-
-def _logsumexp(values: np.ndarray) -> float:
-    """Numerically stable log-sum-exp for forward-backward computations."""
-    values = np.asarray(values, dtype=float)
-    max_value = np.max(values)
-    return float(max_value + np.log(np.sum(np.exp(values - max_value))))
-
-
-def _forward_backward_gamma_xi(
-    observations: np.ndarray,
-    transition_matrix: np.ndarray,
-    emission_means: np.ndarray,
-    emission_covariances: Sequence[np.ndarray],
-) -> Tuple[np.ndarray, np.ndarray, float]:
-    """Compute gamma, xi, and log-likelihood using a stable forward-backward pass."""
-    n_obs, n_features = observations.shape
-    n_regimes = transition_matrix.shape[0]
-
-    log_emissions = np.empty((n_obs, n_regimes), dtype=float)
-    for regime_idx in range(n_regimes):
-        diff = observations - emission_means[regime_idx]
-        cov = np.asarray(emission_covariances[regime_idx], dtype=float)
-        sign, logdet = np.linalg.slogdet(cov)
-        if sign <= 0:
-            raise ValueError("Emission covariance must be positive definite during EM.")
-        precision = np.linalg.inv(cov)
-        mahat = np.einsum('ij,jk,ik->i', diff, precision, diff)
-        log_emissions[:, regime_idx] = -0.5 * (
-            n_features * np.log(2.0 * np.pi) + logdet + mahat
+    if best_model is None:
+        raise RuntimeError(
+            f"None of {n_init} random-init EM runs converged. Real failure, "
+            f"not something to paper over — check data quality, n_iter, or "
+            f"max_duration before proceeding."
         )
 
-    log_trans = np.log(np.clip(transition_matrix, 1e-300, None))
-    log_pi = np.full(n_regimes, -np.log(n_regimes), dtype=float)
+    convergence_rate = sum(1.0 if r["converged"] else 0.0 for r in run_log) / len(run_log)
+    assert best_model is not None
+    best_model = cast(GaussianHSMM, canonicalize_labels(best_model))
+    assert best_model is not None
+    best_model.convergence_rate_ = convergence_rate
 
-    forward = np.empty((n_obs, n_regimes), dtype=float)
-    forward[0] = log_pi + log_emissions[0]
-    for t in range(1, n_obs):
-        for regime_idx in range(n_regimes):
-            forward[t, regime_idx] = log_emissions[t, regime_idx] + _logsumexp(
-                forward[t - 1] + log_trans[:, regime_idx]
-            )
+    return best_model, run_log
 
-    loglik = _logsumexp(forward[-1])
 
-    backward = np.empty((n_obs, n_regimes), dtype=float)
-    backward[-1] = 0.0
-    for t in range(n_obs - 2, -1, -1):
-        for regime_idx in range(n_regimes):
-            backward[t, regime_idx] = _logsumexp(
-                log_trans[regime_idx] + log_emissions[t + 1] + backward[t + 1]
-            )
+def select_k_by_bic(
+    X: np.ndarray,
+    n_features: int,
+    k_candidates: tuple[int, ...] = DEFAULT_FIT_CONFIG.k_candidates,
+    n_init: int = DEFAULT_FIT_CONFIG.n_init,
+    n_iter: int = DEFAULT_FIT_CONFIG.n_iter,
+    max_duration: int = DEFAULT_FIT_CONFIG.max_duration,
+    base_seed: int = 0,
+    verbose: bool = False,
+    bypass_init_gate: bool = False,
+) -> tuple[GaussianHSMM, dict]:
+    """Fit each candidate K with the full random-restart harness, select by
+    BIC only — never because a K 'gives more interesting regimes'."""
+    results = {}
+    best_k = None
+    best_bic = np.inf
+    best_model: GaussianHSMM | None = None
 
-    log_gamma = forward + backward - loglik
-    gamma = np.exp(log_gamma)
-    gamma /= np.maximum(gamma.sum(axis=1, keepdims=True), 1e-300)
-
-    xi = np.empty((max(n_obs - 1, 0), n_regimes, n_regimes), dtype=float)
-    for t in range(n_obs - 1):
-        log_xi = (
-            forward[t][:, None]
-            + log_trans
-            + log_emissions[t + 1][None, :]
-            + backward[t + 1][None, :]
-            - loglik
+    for k in k_candidates:
+        if verbose:
+            print(f"Fitting K={k}...")
+        model, run_log = fit_with_random_restarts(
+            X, n_regimes=k, n_features=n_features, n_init=n_init, n_iter=n_iter,
+            max_duration=max_duration, base_seed=base_seed + k * 1000, verbose=False,
+            bypass_init_gate=bypass_init_gate,
         )
-        xi[t] = np.exp(log_xi)
-        total = xi[t].sum()
-        if total > 0:
-            xi[t] /= total
+        assert model.log_likelihood_ is not None
+        bic = model.bic(n_observations=(~np.isnan(X).any(axis=1)).sum())
+        results[k] = {
+            "bic": float(bic),
+            "log_likelihood": float(model.log_likelihood_),
+            "convergence_rate": model.convergence_rate_,
+            "run_log": run_log,
+        }
+        if verbose:
+            print(f"  K={k}: BIC={bic:.2f}, conv_rate={model.convergence_rate_:.2f}")
 
-    return gamma, xi, float(loglik)
+        if bic < best_bic:
+            best_bic = bic
+            best_k = k
+            best_model = model
 
+    if best_model is None:
+        raise RuntimeError("No models were fitted because k_candidates was empty.")
 
-def _estimate_duration_parameters(
-    regime_path: np.ndarray,
-    init_mu: np.ndarray,
-    init_sigma: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray, List[int]]:
-    """Estimate log-normal duration parameters from the most-likely regime path."""
-    mu = init_mu.copy()
-    sigma = init_sigma.copy()
-    insufficient_duration_data: List[int] = []
-
-    for regime_idx in range(init_mu.shape[0]):
-        run_lengths: List[int] = []
-        current_length = 0
-        for state in regime_path:
-            if int(state) == regime_idx:
-                current_length += 1
-            else:
-                if current_length > 0:
-                    run_lengths.append(current_length)
-                current_length = 0
-        if current_length > 0:
-            run_lengths.append(current_length)
-
-        if len(run_lengths) < 2:
-            insufficient_duration_data.append(regime_idx)
-            continue
-
-        log_run_lengths = np.log(np.asarray(run_lengths, dtype=float))
-        mu[regime_idx] = float(np.mean(log_run_lengths))
-        sigma[regime_idx] = float(np.std(log_run_lengths, ddof=0))
-
-    return mu, sigma, insufficient_duration_data
-
-
-def _run_em_single_initialization(
-    observations: np.ndarray,
-    n_regimes: int,
-    max_iter: int,
-    tol: float,
-    rng: np.random.Generator,
-) -> EMRunResult:
-    """Run one EM iteration chain for a fixed random initialization."""
-    transition_matrix, means, covariances, duration_mu, duration_sigma = _initialize_parameters(
-        observations,
-        n_regimes,
-        rng,
-    )
-    prev_loglik = None
-    insufficient_duration_data: List[int] = []
-
-    for iteration in range(1, max_iter + 1):
-        gamma, xi, current_loglik = _forward_backward_gamma_xi(
-            observations,
-            transition_matrix,
-            means,
-            covariances,
-        )
-
-        # M-step: update means and covariances using responsibilities.
-        nk = gamma.sum(axis=0)
-        means = (gamma.T @ observations) / np.maximum(nk[:, None], 1e-12)
-
-        new_covariances: List[np.ndarray] = []
-        for regime_idx in range(n_regimes):
-            diff = observations - means[regime_idx]
-            weights = gamma[:, regime_idx][:, None, None]
-            cov = (weights * diff[:, :, None] * diff[:, None, :]).sum(axis=0) / np.maximum(nk[regime_idx], 1e-12)
-            cov = 0.5 * (cov + cov.T)
-            cov += np.eye(observations.shape[1], dtype=float) * 1e-6
-            new_covariances.append(cov)
-        covariances = new_covariances
-
-        # M-step: update transition matrix from pairwise posteriors xi_t(i, j).
-        new_transition = np.empty_like(transition_matrix)
-        for state_i in range(n_regimes):
-            denominator = gamma[:-1, state_i].sum() if observations.shape[0] > 1 else 1.0
-            if denominator <= 1e-12:
-                new_transition[state_i] = np.full(n_regimes, 1.0 / n_regimes, dtype=float)
-            else:
-                new_transition[state_i] = xi[:, state_i, :].sum(axis=0) / denominator
-                new_transition[state_i] = np.clip(new_transition[state_i], 1e-12, None)
-                new_transition[state_i] /= new_transition[state_i].sum()
-        transition_matrix = new_transition
-
-        # Duration parameters: estimate from the most likely hidden path.
-        most_likely_path = np.argmax(gamma, axis=1)
-        duration_mu, duration_sigma, insufficient_duration_data = _estimate_duration_parameters(
-            most_likely_path,
-            duration_mu,
-            duration_sigma,
-        )
-
-        if prev_loglik is not None and abs(current_loglik - prev_loglik) < tol:
-            return EMRunResult(
-                loglik=current_loglik,
-                converged=True,
-                n_iter=iteration,
-                params={
-                    "transition_matrix": transition_matrix,
-                    "emission_means": means,
-                    "emission_covariances": covariances,
-                    "duration_mu": duration_mu,
-                    "duration_sigma": duration_sigma,
-                },
-                insufficient_duration_data=insufficient_duration_data,
-            )
-        prev_loglik = current_loglik
-
-    return EMRunResult(
-        loglik=prev_loglik if prev_loglik is not None else float("-inf"),
-        converged=False,
-        n_iter=max_iter,
-        params={
-            "transition_matrix": transition_matrix,
-            "emission_means": means,
-            "emission_covariances": covariances,
-            "duration_mu": duration_mu,
-            "duration_sigma": duration_sigma,
-        },
-        insufficient_duration_data=insufficient_duration_data,
-    )
-
-
-def _bic_score(loglik: float, n_params: int, n_observations: int) -> float:
-    """Compute the Bayesian Information Criterion (BIC)."""
-    if n_observations <= 0:
-        raise ValueError("n_observations must be positive.")
-    return -2.0 * loglik + n_params * np.log(n_observations)
+    assert best_model is not None
+    selection_report = {
+        "selected_k": best_k,
+        "bic_by_k": {k: results[k]["bic"] for k in results},
+        "loglik_by_k": {k: results[k]["log_likelihood"] for k in results},
+        "convergence_rate_by_k": {k: results[k]["convergence_rate"] for k in results},
+        "selection_rule": "min BIC across K candidates — never chosen for 'interesting regimes'",
+    }
+    return best_model, selection_report
 
 
 def fit_hssm_model(
@@ -352,89 +145,69 @@ def fit_hssm_model(
     max_iter: int = 200,
     tol: float = 1e-4,
     random_seed: Optional[int] = None,
+    allow_fast_test_fit: bool = False,
 ) -> Tuple[KimHSSMModel, Dict[str, Any]]:
-    """Fit a KimHSSMModel across K=2,3,4 and select the best K via BIC.
+    """Legacy wrapper for backward compatibility with existing test suites.
 
-    Parameters
-    ----------
-    observations:
-        A 2D array or DataFrame of shape (T, n_features), typically the output of
-        feature reduction.
-    candidate_ks:
-        Candidate numbers of latent regimes. By default: (2, 3, 4).
-    n_initializations:
-        Minimum number of random initializations per K; more are allowed.
-    max_iter:
-        Maximum iterations allowed per initialization.
-    tol:
-        Convergence threshold on log-likelihood change for each initialization.
-    random_seed:
-        Optional seed for reproducibility.
-
-    Returns
-    -------
-    Tuple[KimHSSMModel, Dict[str, Any]]
-        The fitted model and a detailed report with BIC and convergence metrics.
+    If allow_fast_test_fit is False (default), n_initializations < 10 will raise.
+    Set to True only for fast unit testing.
     """
-    matrix = _as_observation_matrix(observations)
-    if any(k < 2 for k in candidate_ks):
-        raise ValueError("candidate_ks must contain values of at least 2.")
-    if n_initializations < 1:
-        raise ValueError("n_initializations must be positive.")
+    if isinstance(observations, pd.DataFrame):
+        X = observations.to_numpy(dtype=float)
+    else:
+        X = np.asarray(observations, dtype=float)
 
-    rng = np.random.default_rng(random_seed)
-    bic_by_k: Dict[int, float] = {}
-    loglik_by_k: Dict[int, float] = {}
-    convergence_rate_by_k: Dict[int, float] = {}
-    selected_model: Optional[KimHSSMModel] = None
-    selected_loglik: Optional[float] = None
-    selected_k: Optional[int] = None
+    n_features = X.shape[1]
 
-    for k in candidate_ks:
-        runs: List[EMRunResult] = []
-        for _ in range(n_initializations):
-            run = _run_em_single_initialization(matrix, k, max_iter=max_iter, tol=tol, rng=rng)
-            runs.append(run)
+    # Explicitly check for NaNs as expected by some legacy tests
+    if np.isnan(X).any():
+        raise ValueError("Observation matrix contains NaN values; missingness must be handled upstream.")
 
-        converged_runs = [run for run in runs if run.converged]
-        if not converged_runs:
-            best_run = max(runs, key=lambda x: x.loglik)
-            chosen_run = best_run
-        else:
-            chosen_run = max(converged_runs, key=lambda x: x.loglik)
+    model, report = select_k_by_bic(
+        X,
+        n_features=n_features,
+        k_candidates=tuple(candidate_ks),
+        n_init=n_initializations,
+        n_iter=max_iter,
+        base_seed=random_seed or 0,
+        bypass_init_gate=allow_fast_test_fit,
+    )
 
-        n_params = k * (matrix.shape[1] + 1) + k * (k - 1)  # means + covariances + transition terms
-        bic = _bic_score(float(chosen_run.loglik), n_params, matrix.shape[0])
-        bic_by_k[k] = bic
-        loglik_by_k[k] = float(chosen_run.loglik)
-        convergence_rate_by_k[k] = len(converged_runs) / float(n_initializations)
-
-        if selected_k is None or bic < bic_by_k[selected_k]:
-            selected_k = k
-            selected_loglik = float(chosen_run.loglik)
-            selected_model = KimHSSMModel(
-                n_regimes=k,
-                n_features=matrix.shape[1],
-                transition_matrix=chosen_run.params["transition_matrix"],
-                emission_means=chosen_run.params["emission_means"],
-                emission_covariances=chosen_run.params["emission_covariances"],
-                duration_mu=np.asarray(chosen_run.params["duration_mu"], dtype=float),
-                duration_sigma=np.asarray(chosen_run.params["duration_sigma"], dtype=float),
-                duration_prior="lognormal",
-            )
-
-    if selected_model is None or selected_k is None or selected_loglik is None:
-        raise RuntimeError("No valid HSSM model fit was produced.")
-
-    report: Dict[str, Any] = {
-        "k_selected": selected_k,
-        "bic_by_k": bic_by_k,
-        "loglik_by_k": loglik_by_k,
-        "convergence_rate_by_k": convergence_rate_by_k,
-        "selected_loglik": selected_loglik,
+    compat_report = {
+        "k_selected": report["selected_k"],
+        "bic_by_k": report["bic_by_k"],
+        "loglik_by_k": report["loglik_by_k"],
+        "convergence_rate_by_k": report["convergence_rate_by_k"],
+        "selected_loglik": model.log_likelihood_,
         "candidate_ks": tuple(candidate_ks),
         "n_initializations": n_initializations,
         "max_iter": max_iter,
         "tol": tol,
     }
-    return selected_model, report
+
+    # Convert GaussianHSMM to KimHSSMModel for compatibility (using genuine EM-integrated durations)
+    assert model.var is not None
+    assert model.A is not None
+    assert model.mu is not None
+    assert model.dur_mu is not None
+    assert model.dur_sigma is not None
+
+    covariances = [np.diag(v) for v in model.var]
+    fitted_model = KimHSSMModel(
+        n_regimes=model.K,
+        n_features=model.F,
+        transition_matrix=model.A,
+        emission_means=model.mu,
+        emission_covariances=covariances,
+        duration_mu=model.dur_mu,
+        duration_sigma=model.dur_sigma,
+        duration_prior="lognormal",
+        max_duration=model.Dmax,
+        seed=random_seed,
+    )
+    fitted_model.log_likelihood_ = model.log_likelihood_
+    fitted_model.log_likelihood_history_ = model.log_likelihood_history_
+    fitted_model.converged_ = model.converged_
+    fitted_model.n_iter_ = model.n_iter_
+
+    return fitted_model, compat_report

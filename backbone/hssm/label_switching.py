@@ -1,55 +1,44 @@
-"""Canonical regime ordering for Kim-style HSSM fits.
+"""
+MP-02 fix: canonical post-hoc regime alignment. HMMs/SSMs with multiple regimes
+can label the same underlying regime differently across fitting runs, making
+cross-session/cross-user comparison meaningless without correction.
 
-This module resolves the label-switching ambiguity that commonly appears in
-Markov-switching models by imposing a deterministic ordering over latent
-regimes. The canonical rule is:
-
-- Sort regimes by mean behavioral activity level, ascending.
-- Reorder transition probabilities, emission means, covariance matrices,
-  duration parameters, and any stored regime metadata to match the new order.
-
-This ordering is intentionally a post-hoc fix applied after fitting, and it is
-meant to be stable once chosen.
+Solution (locked convention, never to be changed after first real fit): sort
+regimes by mean behavioral activity level, ascending. Regime 0 = lowest
+activity, regime K-1 = highest.
 """
 
 from __future__ import annotations
-
-from typing import Sequence
-
 import numpy as np
 
-from backbone.hssm.model import KimHSSMModel
+ACTIVITY_LEVEL_CONVENTION = "mean_L2_norm_of_regime_mean_vector"
 
 
-def canonicalize_regime_order(model: KimHSSMModel) -> KimHSSMModel:
-    """Sort the model's regimes by mean behavioral activity level ascending.
+def canonicalize_labels(model) -> object:
+    """Reorders pi, A, mu, var, dur_mu, dur_sigma in place by ascending
+    activity level (L2 norm of each regime's mean vector in reduced feature
+    space). Returns the same model object, mutated, plus a `_label_order_applied`
+    attribute recording the permutation used (for audit)."""
+    activity = np.linalg.norm(model.mu, axis=1)
+    order = np.argsort(activity)
 
-    The activity level for a regime is defined as the mean absolute value of its
-    emission mean vector. This yields a deterministic ordering independent of the
-    initialization-specific label names.
-    """
-    if not isinstance(model, KimHSSMModel):
-        raise TypeError("Input must be a KimHSSMModel instance.")
+    model.pi = model.pi[order]
+    model.A = model.A[np.ix_(order, order)]
+    model.mu = model.mu[order]
+    model.var = model.var[order]
+    model.dur_mu = model.dur_mu[order]
+    model.dur_sigma = model.dur_sigma[order]
+    model._label_order_applied = order.tolist()
+    return model
 
-    activity_scores = np.mean(np.abs(model.emission_means), axis=1)
-    sorted_indices = np.argsort(activity_scores)
 
-    reordered_means = model.emission_means[sorted_indices].copy()
-    reordered_covariances = [np.asarray(model.emission_covariances[idx], dtype=float) for idx in sorted_indices]
-    reordered_transition = model.transition_matrix[np.ix_(sorted_indices, sorted_indices)].copy()
-    reordered_duration_mu = model.duration_mu[sorted_indices].copy()
-    reordered_duration_sigma = model.duration_sigma[sorted_indices].copy()
+def canonicalize_regime_order(model) -> object:
+    """Legacy alias matching foundation's old label switching interface."""
+    return canonicalize_labels(model)
 
-    fixed_model = KimHSSMModel(
-        n_regimes=model.n_regimes,
-        n_features=model.n_features,
-        transition_matrix=reordered_transition,
-        emission_means=reordered_means,
-        emission_covariances=reordered_covariances,
-        duration_mu=reordered_duration_mu,
-        duration_sigma=reordered_duration_sigma,
-        duration_prior=model.duration_prior,
-        metadata=dict(model.metadata),
-    )
-    fixed_model.metadata["regime_ordering"] = "ascending_activity"
-    return fixed_model
+
+def activity_levels(model) -> np.ndarray:
+    """Returns the activity-level metric per regime, in current label order.
+    Exposed separately so tests/callers can assert ascending order without
+    recomputing the convention inline."""
+    return np.linalg.norm(model.mu, axis=1)
