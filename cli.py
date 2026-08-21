@@ -15,8 +15,14 @@ else in this file needs to be touched.
 
 import argparse
 import json
-import random
-from datetime import datetime, timedelta
+import os
+from datetime import datetime, timedelta, timezone
+
+import event_store
+from analyzer import analyze_event
+from core.update_state import update_state
+from integration_log import log_event
+from pod_d import get_belief_then, get_belief_now
 
 # ---------------------------------------------------------------------------
 # SHARED CONTRACT — fill this in with what you agreed Day 1 morning
@@ -38,6 +44,7 @@ STARTING_STATE = {name: 5.0 for name in VARIABLES}
 # File where events are saved between runs — stand-in for Pod C's database
 # until the real one is wired in.
 EVENTS_FILE = "events.json"
+DB_PATH = os.getenv("CHRONIS_DB_PATH", "events.db")
 
 
 def load_events():
@@ -70,24 +77,9 @@ EVENT_LOG = load_events()
 
 def update_state_placeholder(current_state, event_signal):
     """
-    Fake version of Pod A's update function.
-    event_signal looks like: {"mood": {"delta": 0.3, "confidence": 0.8}, ...}
-    Blends current value toward a random-ish "new evidence" value, weighted
-    by whether the variable is fast or slow — just enough to look real.
+    Swapped in real Pod A Core State Engine.
     """
-    new_state = dict(current_state)
-    for name, signal in event_signal.items():
-        if name not in new_state:
-            continue
-        speed = VARIABLES[name]["speed"]
-        blend = 0.6 if speed == "fast" else 0.15
-        suggested = new_state[name] + signal.get("delta", 0)
-        low, high = VARIABLES[name]["range"]
-        suggested = max(low, min(high, suggested))
-        new_state[name] = round(
-            new_state[name] * (1 - blend) + suggested * blend, 2
-        )
-    return new_state
+    return update_state(current_state, event_signal)
 
 
 # ---------------------------------------------------------------------------
@@ -97,18 +89,12 @@ def update_state_placeholder(current_state, event_signal):
 
 def interpret_event_placeholder(event_text):
     """
-    Fake version of Pod B's function.
-    Real one sends event_text to Claude and gets back a structured
-    {variable: {delta, confidence}} object. Here we just fake plausible
-    numbers so the pipeline has something to chew on.
+    Swapped in real Pod B Event Understanding module (analyze_event).
     """
-    signal = {}
-    for name in VARIABLES:
-        signal[name] = {
-            "delta": round(random.uniform(-1.5, 1.5), 2),
-            "confidence": round(random.uniform(0.4, 0.95), 2),
-        }
-    return signal
+    res = analyze_event(event_text)
+    if not isinstance(res, dict) or not isinstance(res.get("signals"), dict):
+        raise ValueError("Pod B returned a payload without a signals object")
+    return res["signals"]
 
 
 # ---------------------------------------------------------------------------
@@ -119,35 +105,58 @@ def interpret_event_placeholder(event_text):
 def add_event_placeholder(text, signal, timestamp=None, persist=True,
                            event_list=None):
     """
-    persist=True writes to events.json (real add-event usage).
-    persist=False keeps it purely in memory (used by `demo`, so a demo run
-    never pollutes your real saved events).
+    Swapped in real Pod C Event Storage module (event_store).
     """
+    ts_val = timestamp or datetime.now()
+    ts_str = ts_val.isoformat() if isinstance(ts_val, datetime) else str(ts_val)
     event = {
         "text": text,
-        "timestamp": (timestamp or datetime.now()).isoformat(),
+        "timestamp": ts_str,
         "signal": signal,
     }
-    target = EVENT_LOG if event_list is None else event_list
-    target.append(event)
+    if event_list is not None:
+        event_list.append(event)
     if persist:
-        save_events(EVENT_LOG)
+        conf = 0.8
+        if isinstance(signal, dict) and signal:
+            confs = [v.get("confidence", 0.8) for v in signal.values() if isinstance(v, dict)]
+            if confs:
+                conf = sum(confs) / len(confs)
+        event_store.add_event(
+            description=text,
+            happened_at=ts_str,
+            change_data=signal,
+            confidence=conf,
+            db_path=DB_PATH
+        )
     return event
 
 
 def fetch_events_placeholder(start=None, end=None, event_list=None):
-    source = EVENT_LOG if event_list is None else event_list
-    if start is None and end is None:
-        return list(source)
-    result = []
-    for e in source:
-        ts = datetime.fromisoformat(e["timestamp"])
-        if start and ts < start:
-            continue
-        if end and ts > end:
-            continue
-        result.append(e)
-    return result
+    """
+    Swapped in real Pod C Event Storage module (fetch_events_between).
+    """
+    if event_list is not None:
+        result = []
+        for e in event_list:
+            ts = datetime.fromisoformat(e["timestamp"]) if isinstance(e["timestamp"], str) else e["timestamp"]
+            if start and ts < start:
+                continue
+            if end and ts > end:
+                continue
+            result.append(e)
+        return result
+    start_str = start.isoformat() if isinstance(start, datetime) else (start or "2000-01-01T00:00:00")
+    end_str = end.isoformat() if isinstance(end, datetime) else (end or "2099-12-31T23:59:59")
+    db_events = event_store.fetch_events_between(start_str, end_str, db_path=DB_PATH)
+    return [
+        {
+            "text": e.description,
+            "timestamp": e.happened_at,
+            "signal": e.change_data,
+        }
+        for e in db_events
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -156,21 +165,22 @@ def fetch_events_placeholder(start=None, end=None, event_list=None):
 # ---------------------------------------------------------------------------
 
 def query_then_placeholder(target_date, event_list=None):
-    """What the system believed using only events on/before target_date."""
-    events = fetch_events_placeholder(end=target_date, event_list=event_list)
-    state = dict(STARTING_STATE)
-    for e in events:
-        state = update_state_placeholder(state, e["signal"])
-    return state
+    """
+    Swapped in real Pod D get_belief_then.
+    """
+    # Normalise target_date to ISO string for timestamp comparison
+    td_str = target_date.isoformat() if hasattr(target_date, "isoformat") else str(target_date)
+    all_events = fetch_events_placeholder(event_list=event_list)
+    return get_belief_then(all_events, td_str, dict(STARTING_STATE), update_state_placeholder)
 
 
 def query_now_placeholder(target_date, event_list=None):
-    """What the system believes now, using ALL events, about that same date."""
-    events = fetch_events_placeholder(event_list=event_list)  # everything
-    state = dict(STARTING_STATE)
-    for e in events:
-        state = update_state_placeholder(state, e["signal"])
-    return state
+    """
+    Swapped in real Pod D get_belief_now.
+    """
+    td_str = target_date.isoformat() if hasattr(target_date, "isoformat") else str(target_date)
+    all_events = fetch_events_placeholder(event_list=event_list)
+    return get_belief_now(all_events, td_str, dict(STARTING_STATE), update_state_placeholder)
 
 
 # ---------------------------------------------------------------------------
@@ -178,22 +188,54 @@ def query_now_placeholder(target_date, event_list=None):
 # ---------------------------------------------------------------------------
 
 def cmd_add_event(args):
-    signal = interpret_event_placeholder(args.text)
-    event = add_event_placeholder(args.text, signal)
-    print(f"Added event: \"{event['text']}\" at {event['timestamp']}")
-    print(json.dumps(signal, indent=2))
+    try:
+        if not args.text or not args.text.strip():
+            raise ValueError("event text must not be empty")
+        timestamp = args.at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+        signal = interpret_event_placeholder(args.text)
+        event = add_event_placeholder(args.text, signal, timestamp=timestamp)
+        trace_id = log_event(
+            pilot_id=args.pilot_id, input_id=args.input_id, component="pod-e",
+            event_type="pilot_event", status="accepted", stage="persisted",
+            message="Event understood, state-compatible, and appended to storage.", text=args.text,
+        )
+        print(f"Added event: \"{event['text']}\" at {event['timestamp']}")
+        print(f"Trace ID: {trace_id}")
+        print(json.dumps(signal, indent=2))
+    except Exception as exc:
+        trace_id = log_event(
+            pilot_id=args.pilot_id, input_id=args.input_id, component="pod-e",
+            event_type="pilot_event", status="rejected", stage="ingestion",
+            error_code=type(exc).__name__, message=str(exc), text=args.text,
+        )
+        raise SystemExit(f"Event was not stored. Trace ID: {trace_id}. Error: {exc}")
 
 
 def cmd_query(args):
-    target_date = datetime.fromisoformat(args.date)
-    then_state = query_then_placeholder(target_date)
-    now_state = query_now_placeholder(target_date)
+    try:
+        target_date = datetime.fromisoformat(args.date.replace("Z", "+00:00"))
+        if len(args.date) == 10:
+            target_date = target_date.replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
+        then_state = query_then_placeholder(target_date)
+        now_state = query_now_placeholder(target_date)
+    except Exception as exc:
+        trace_id = log_event(
+            pilot_id=None, input_id=None, component="pod-e", event_type="query",
+            status="rejected", stage="query", error_code=type(exc).__name__,
+            message=str(exc), text=args.date,
+        )
+        raise SystemExit(f"Query failed. Trace ID: {trace_id}. Error: {exc}")
 
+    trace_id = log_event(
+        pilot_id=None, input_id=None, component="pod-e", event_type="query",
+        status="accepted", stage="query", message="Then/now state replay completed.", text=args.date,
+    )
     print(f"\n--- What we believed THEN (as of {args.date}) ---")
     print(json.dumps(then_state, indent=2))
 
     print(f"\n--- What we believe NOW about that same date ---")
     print(json.dumps(now_state, indent=2))
+    print(f"Trace ID: {trace_id}")
 
 
 def cmd_demo(args):
@@ -205,19 +247,19 @@ def cmd_demo(args):
 
     demo_events = []  # isolated — never touches your real events.json
 
+    # Explicitly synthetic fixtures: this rehearsal path never calls an LLM or
+    # persists data, and must never be presented as pilot evidence.
     scenario = [
-        ("felt confident presenting to the team", None),
-        ("missed a deadline on the follow-up work", None),
-        ("presentation actually went badly and caused ongoing stress",
-         None),
+        ("synthetic: presentation went well", {"mood": {"value": 8, "confidence": .9}, "confidence": {"value": 8, "confidence": .9}}),
+        ("synthetic: missed follow-up deadline", {"stress": {"value": 8, "confidence": .9}, "focus": {"value": 3, "confidence": .8}}),
+        ("synthetic: later feedback revised the presentation assessment", {"mood": {"value": 2, "confidence": .9}, "confidence": {"value": 2, "confidence": .9}, "stress": {"value": 9, "confidence": .9}}),
     ]
 
     base_time = datetime(2026, 7, 1)
     reveal_date = None
 
-    for i, (text, _) in enumerate(scenario):
+    for i, (text, signal) in enumerate(scenario):
         ts = base_time + timedelta(days=i)
-        signal = interpret_event_placeholder(text)
         add_event_placeholder(text, signal, timestamp=ts, persist=False,
                                event_list=demo_events)
         print(f"[Day {i+1}] Event: \"{text}\"")
@@ -229,10 +271,10 @@ def cmd_demo(args):
     now_state = query_now_placeholder(reveal_date, event_list=demo_events)
     print("THEN:", json.dumps(then_state, indent=2))
     print("NOW: ", json.dumps(now_state, indent=2))
-    print(
-        "\nThe 'now' answer is more trustworthy because it incorporates "
-        "later events that revealed the true context behind the early one."
-    )
+    print("\nSynthetic rehearsal only: use inspect_pilot_data.py for actual pilot observations.")
+    log_event(pilot_id="synthetic", input_id="demo-fixture", component="pod-e",
+              event_type="rehearsal", status="accepted", stage="completed",
+              message="Deterministic synthetic end-to-end rehearsal completed.", text="demo-fixture")
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +290,9 @@ def main():
 
     p_add = subparsers.add_parser("add-event", help="Add a new event")
     p_add.add_argument("text", help="Plain-text description of the event")
+    p_add.add_argument("--pilot-id", help="Pseudonymous pilot identifier for observability only")
+    p_add.add_argument("--input-id", help="Caller-supplied input identifier for safe reproduction")
+    p_add.add_argument("--at", help="ISO-8601 event time; defaults to current UTC time")
     p_add.set_defaults(func=cmd_add_event)
 
     p_query = subparsers.add_parser(
