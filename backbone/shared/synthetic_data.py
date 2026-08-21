@@ -24,7 +24,7 @@ def generate_surrogate_user(
 
     calendar_day = 0
     regime_path = []
-    current_regime = rng.integers(0, n_regimes)
+    current_regime = int(rng.integers(0, n_regimes))
     total_days_target = int(n_sessions * 1.15)
 
     trans = rng.dirichlet(alpha=np.ones(n_regimes - 1) * 2.0, size=n_regimes)
