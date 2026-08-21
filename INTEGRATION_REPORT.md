@@ -38,3 +38,15 @@ Use an empty, explicit database path to avoid relying on a developer's existing
 pilot data: `CHRONIS_DB_PATH=/private/tmp/chronis-rehearsal.db python3 cli.py demo`.
 The query path can be exercised against the same fresh database with
 `CHRONIS_DB_PATH=/private/tmp/chronis-rehearsal.db python3 cli.py query 2026-07-01`.
+
+## Final v0.2 Integration Status
+The task 2 feature branches (Pod A, Pod B, Pod C, Pod D) have been meticulously integrated into the `pod-e-v0.2-integration` branch without reverting the important real-pilot observability schemas.
+
+*   **Pod A**: `core/` updated to include uncertainty-aware state engine with `value` and `spread`. Re-wired `cli.py` and `pilot_reporting.py` to handle the new nested state architecture.
+*   **Pod B**: Added validation tests and scripts (`dataset.py`, `evaluate.py`, `test_analyzer.py`) while preserving Pod E's bounded exponential backoff logic in `analyzer.py`.
+*   **Pod C**: Safely grafted the `checkpoints` schema and `fetch_latest_checkpoint_before` caching logic into the `event_store.py` SQLite engine. Rewrote the `events` table query statements to retain `pilot_id`, `input_id`, and `data_kind` tracking. 
+*   **Pod D**: Implemented inverse-variance backward belief smoothing `pull_toward_later_evidence()` directly into `pod_d.py`.
+
+All 35 integration tests pass successfully. The `python3 cli.py demo` synthetic rehearsal completes deterministic processing without LLM credential failures. The `inspect_pilot_data.py` pipeline effectively restricts inspection reports exclusively to verified `--pilot-id` payloads, isolating experimental behavior from real data.
+
+*System is certified ready for human review and Demo 2 rollout execution.*

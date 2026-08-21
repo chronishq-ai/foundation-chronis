@@ -22,7 +22,7 @@ class PodEIntegrationTests(unittest.TestCase):
         ]
         then_state = get_belief_then(events, "2026-07-01T23:59:59+00:00", initial, update_state)
         now_state = get_belief_now(events, "2026-07-01T23:59:59+00:00", initial, update_state)
-        self.assertGreater(then_state["mood"], now_state["mood"])
+        self.assertGreater(then_state["mood"]["value"], now_state["mood"]["value"])
 
     def test_malformed_state_signal_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -97,7 +97,7 @@ class PodEIntegrationTests(unittest.TestCase):
                 output = io.StringIO()
                 with redirect_stdout(output):
                     cli.cmd_query(QueryArgs())
-                self.assertIn('"mood": 7.4', output.getvalue())
+                self.assertIn('"value": 7.4', output.getvalue())
             finally:
                 analyzer.set_provider(None)
                 cli.DB_PATH = previous_path

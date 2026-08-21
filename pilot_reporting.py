@@ -6,14 +6,15 @@ import sqlite3
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
-
 from core.update_state import update_state
 from event_store import initialize_database
+from core.config_loader import load_state_schema
+
+_SCHEMA = load_state_schema()
 
 STARTING_STATE = {
-    "mood": 5.0, "focus": 5.0, "stress": 5.0, "confidence": 5.0,
-    "trust": 5.0, "motivation": 5.0, "social_engagement": 5.0,
+    name: {"value": 5.0, "spread": info["initial_spread"]}
+    for name, info in _SCHEMA["variables"].items()
 }
 
 
@@ -136,9 +137,11 @@ def _candidate_patterns(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 now_state = dict(then_state)
                 for event in events[index + 1:]:
                     now_state = update_state(now_state, event["signal"])
-            except (TypeError, ValueError, KeyError):
+            except (TypeError, ValueError, KeyError) as e:
+                print(e)
                 continue
-            divergence = round(sum(abs(now_state[key] - then_state[key]) for key in STARTING_STATE), 2)
+            
+            divergence = round(sum(abs(now_state[key]["value"] - then_state[key]["value"]) for key in STARTING_STATE), 2)
             if divergence > 0.5:
                 candidates.append({
                     "pilot_id": pilot_id,

@@ -1,47 +1,59 @@
 {
+  "spread_config": {
+    "range": [0, 5],
+    "agreement_threshold": 2.0,
+    "update_rate": 0.5
+  },
+
   "variables": {
-
-    "mood":{
-      "range":[0,10],
-      "speed":0.8,
-      "type":"fast"
+    "mood": {
+      "range": [0, 10],
+      "speed": 0.8,
+      "type": "fast",
+      "initial_spread": 2.0
     },
 
-    "focus":{
-      "range":[0,10],
-      "speed":0.4,
-      "type":"medium"
+    "focus": {
+      "range": [0, 10],
+      "speed": 0.4,
+      "type": "medium",
+      "initial_spread": 2.0
     },
 
-    "stress":{
-      "range":[0,10],
-      "speed":0.7,
-      "type":"fast",
-      "direction":"negative"
+    "stress": {
+      "range": [0, 10],
+      "speed": 0.7,
+      "type": "fast",
+      "direction": "negative",
+      "initial_spread" : 2.0
     },
 
-    "confidence":{
-      "range":[0,10],
-      "speed":0.3,
-      "type":"medium"
+    "confidence": {
+      "range": [0, 10],
+      "speed": 0.3,
+      "type": "medium",
+      "initial_spread": 2.5
     },
 
-    "trust":{
-      "range":[0,10],
-      "speed":0.05,
-      "type":"slow"
+    "trust": {
+      "range": [0, 10],
+      "speed": 0.05,
+      "type": "slow",
+      "initial_spread": 3.5
     },
 
-    "motivation":{
-      "range":[0,10],
-      "speed":0.4,
-      "type":"medium"
+    "motivation": {
+      "range": [0, 10],
+      "speed": 0.4,
+      "type": "medium",
+      "initial_spread": 2.5
     },
 
-    "social_engagement":{
-      "range":[0,10],
-      "speed":0.2,
-      "type":"slow"
+    "social_engagement": {
+      "range": [0, 10],
+      "speed": 0.2,
+      "type": "slow",
+      "initial_spread": 3.0
     }
 
   }

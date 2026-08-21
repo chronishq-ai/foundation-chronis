@@ -1,50 +1,39 @@
 from core.confidence_handler import confidence_weighted_update
 from core.config_loader import load_state_schema
+from core.spread_handler import update_spread
 
 def update_state(current_state, incoming_event):
 
-    if not isinstance(current_state, dict) or not isinstance(incoming_event, dict):
-        raise TypeError("current_state and incoming_event must be dictionaries")
-
-    # created a copy of current state
+    # Create a copy of the current state
     updated_state = current_state.copy()
 
-    # load state schema
+    # Load the shared state schema
     state_schema = load_state_schema()
 
-    # loop through all variables affected by event
-    for variable_name, signal in incoming_event.items():
+    # Loop through all variables affected by the event
+    for variable_name in incoming_event:
 
-        if variable_name not in state_schema["variables"]:
-            raise ValueError(f"Unknown state variable: {variable_name}")
+        # Validate variable exists
         if variable_name not in current_state:
-            raise ValueError(f"Current state is missing variable: {variable_name}")
-        if not isinstance(signal, dict):
-            raise TypeError(f"Signal for {variable_name} must be a dictionary")
+            raise ValueError(f"Unknown state variable: {variable_name}")
 
-        # getting incoming value (or delta converted to absolute value) and confidence score
-        if "value" in signal:
-            incoming_value = signal["value"]
-        elif "delta" in signal:
-            incoming_value = current_state[variable_name] + signal["delta"]
-        else:
-            continue
+        # Get incoming value and confidence score
+        incoming_value = incoming_event[variable_name]["value"]
+        confidence = incoming_event[variable_name]["confidence"]
 
-        confidence = signal.get("confidence", 0.5)
-        if not isinstance(incoming_value, (int, float)) or not isinstance(confidence, (int, float)):
-            raise TypeError(f"Signal for {variable_name} must contain numeric value/delta and confidence")
+        # Get current value and spread
+        current_value = current_state[variable_name]["value"]
+        current_spread = current_state[variable_name]["spread"]
 
-        # get current value of the variable
-        old_state = current_state[variable_name]
+        # Get variable metadata from schema
+        variable_info = state_schema["variables"][variable_name]
 
-        # get variable metadata from schema
-        variable_speed = state_schema["variables"][variable_name]["speed"]
-        min_value = state_schema["variables"][variable_name]["range"][0]
-        max_value = state_schema["variables"][variable_name]["range"][1]
+        variable_speed = variable_info["speed"]
+        min_value, max_value = variable_info["range"]
 
-        # calculate the updated value
+        # Update the state value using existing v0.1 logic
         new_value = confidence_weighted_update(
-            old_state,
+            current_value,
             incoming_value,
             variable_speed,
             confidence,
@@ -52,8 +41,19 @@ def update_state(current_state, incoming_event):
             max_value
         )
 
-        # store updated values
-        updated_state[variable_name] = new_value
+        # Update uncertainty spread using v0.2 logic
+        new_spread = update_spread(
+            current_value,
+            incoming_value,
+            current_spread,
+            confidence
+        )
 
-    # return the complete updated state
+        # Store both value and spread
+        updated_state[variable_name] = {
+            "value": new_value,
+            "spread": new_spread
+        }
+
+    # Return the complete updated state
     return updated_state

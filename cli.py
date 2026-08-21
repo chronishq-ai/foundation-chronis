@@ -28,18 +28,15 @@ from pod_d import get_belief_then, get_belief_now
 # SHARED CONTRACT — fill this in with what you agreed Day 1 morning
 # ---------------------------------------------------------------------------
 
-VARIABLES = {
-    # name:                {"range": (low, high), "speed": "fast" | "slow"}
-    "mood":                {"range": (0, 10), "speed": "fast"},
-    "focus":               {"range": (0, 10), "speed": "fast"},
-    "stress":              {"range": (0, 10), "speed": "fast"},
-    "confidence":          {"range": (0, 10), "speed": "slow"},
-    "trust":               {"range": (0, 10), "speed": "slow"},
-    "motivation":          {"range": (0, 10), "speed": "fast"},
-    "social_engagement":   {"range": (0, 10), "speed": "slow"},
-}
+from core.config_loader import load_state_schema
+_SCHEMA = load_state_schema()
 
-STARTING_STATE = {name: 5.0 for name in VARIABLES}
+VARIABLES = _SCHEMA["variables"]
+
+STARTING_STATE = {
+    name: {"value": 5.0, "spread": info["initial_spread"]}
+    for name, info in _SCHEMA["variables"].items()
+}
 
 # File where events are saved between runs — stand-in for Pod C's database
 # until the real one is wired in.
