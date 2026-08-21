@@ -11,10 +11,15 @@ previous stage's output.
 
 ## Pilot contract
 
-`add-event` accepts plain text plus optional pseudonymous `--pilot-id`, `--input-id`,
+`add-event` accepts plain text plus pseudonymous `--pilot-id`, `--input-id`,
 and `--at` ISO timestamp. A provider/validation/storage failure rejects the event,
 returns a trace ID, and appends a structured safe record to
 `logs/integration-events.jsonl`; it is never converted into a neutral event.
+
+Real pilot records persist their pilot and input IDs alongside an explicit `real`
+classification. `inspect_pilot_data.py --demo2 --json` is a read-only report for
+coverage, malformed records, duplicates, and evidence references. Synthetic and
+legacy unattributed events are always excluded from real-pilot metrics.
 
 `demo` is deliberately deterministic synthetic rehearsal data. It is not a pilot
 result. `inspect_pilot_data.py` is the only path for identifying actual candidate

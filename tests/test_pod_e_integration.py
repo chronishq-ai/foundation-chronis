@@ -51,6 +51,7 @@ class PodEIntegrationTests(unittest.TestCase):
             self.assertEqual(record["trace_id"], trace)
             self.assertNotIn("private wording", path.read_text())
             self.assertEqual(record["status"], "rejected")
+            self.assertIn("event_id", record)
 
     def test_empty_pilot_input_is_rejected_before_provider_use(self):
         class Args:
@@ -72,6 +73,34 @@ class PodEIntegrationTests(unittest.TestCase):
                 analyzer.analyze_event("synthetic outage fixture", max_retries=3)
         self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.0, 2.0])
         analyzer.set_provider(None)
+
+    def test_synthetic_cli_ingestion_is_labelled_and_queryable_only_explicitly(self):
+        class Provider:
+            def generate(self, prompt):
+                return '{"signals":{"mood":{"value":8,"confidence":1}}}'
+        class AddArgs:
+            text = "synthetic test event"
+            pilot_id = "fixture-01"
+            input_id = "fixture-input-1"
+            at = "2026-08-10T10:00:00Z"
+            data_kind = "synthetic"
+        class QueryArgs:
+            date = "2026-08-10"
+            pilot_id = "fixture-01"
+            data_kind = "synthetic"
+        with tempfile.TemporaryDirectory() as directory:
+            previous_path = cli.DB_PATH
+            cli.DB_PATH = str(Path(directory) / "events.db")
+            analyzer.set_provider(Provider())
+            try:
+                cli.cmd_add_event(AddArgs())
+                output = io.StringIO()
+                with redirect_stdout(output):
+                    cli.cmd_query(QueryArgs())
+                self.assertIn('"mood": 7.4', output.getvalue())
+            finally:
+                analyzer.set_provider(None)
+                cli.DB_PATH = previous_path
 
 
 if __name__ == "__main__":

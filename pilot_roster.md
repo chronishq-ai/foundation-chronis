@@ -1,26 +1,10 @@
-# Pilot Roster — v0.2 Pilot Week
+# Pilot Roster
 
-## Instructions for Pod E lead
+Use opaque IDs only. Do not add names, event text, or personal information.
 
-1. Fill in each pilot user's name/handle below before Day 1.
-2. After Day 4, confirm each user submitted at least one event per day.
-3. Use this roster when writing the Phase 5 go/no-go summary.
-
----
-
-## Roster
-
-| # | Name / Handle | Confirmed Day 1 | Confirmed Day 2 | Confirmed Day 3 | Confirmed Day 4 | Notes |
+| Pilot ID | Status | Day 1 | Day 2 | Day 3 | Day 4 | Notes |
 |---|---|---|---|---|---|---|
-| 1 | | [ ] | [ ] | [ ] | [ ] | |
-| 2 | | [ ] | [ ] | [ ] | [ ] | |
-| 3 | | [ ] | [ ] | [ ] | [ ] | |
-| 4 | | [ ] | [ ] | [ ] | [ ] | |
-| 5 | | [ ] | [ ] | [ ] | [ ] | |
-| 6 | | [ ] | [ ] | [ ] | [ ] | |
-| 7 | | [ ] | [ ] | [ ] | [ ] | |
-| 8 | | [ ] | [ ] | [ ] | [ ] | |
-| 9 | | [ ] | [ ] | [ ] | [ ] | |
-| 10 | | [ ] | [ ] | [ ] | [ ] | |
 
-**Minimum required:** 5 users with all 4 days confirmed before Phase 4 can start.
+Status values: `PENDING`, `ACTIVE`, `COMPLETE`. Mark `COMPLETE` only after the
+inspection report confirms all four collection days. At least five complete real
+pilots are required for the rollout gate.

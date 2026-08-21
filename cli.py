@@ -103,7 +103,8 @@ def interpret_event_placeholder(event_text):
 # ---------------------------------------------------------------------------
 
 def add_event_placeholder(text, signal, timestamp=None, persist=True,
-                           event_list=None):
+                           event_list=None, pilot_id=None, input_id=None,
+                           data_kind="unattributed"):
     """
     Swapped in real Pod C Event Storage module (event_store).
     """
@@ -122,17 +123,21 @@ def add_event_placeholder(text, signal, timestamp=None, persist=True,
             confs = [v.get("confidence", 0.8) for v in signal.values() if isinstance(v, dict)]
             if confs:
                 conf = sum(confs) / len(confs)
-        event_store.add_event(
+        event["id"] = event_store.add_event(
             description=text,
             happened_at=ts_str,
             change_data=signal,
             confidence=conf,
-            db_path=DB_PATH
+            db_path=DB_PATH,
+            pilot_id=pilot_id,
+            input_id=input_id,
+            data_kind=data_kind,
         )
     return event
 
 
-def fetch_events_placeholder(start=None, end=None, event_list=None):
+def fetch_events_placeholder(start=None, end=None, event_list=None, pilot_id=None,
+                             data_kind=None):
     """
     Swapped in real Pod C Event Storage module (fetch_events_between).
     """
@@ -148,7 +153,9 @@ def fetch_events_placeholder(start=None, end=None, event_list=None):
         return result
     start_str = start.isoformat() if isinstance(start, datetime) else (start or "2000-01-01T00:00:00")
     end_str = end.isoformat() if isinstance(end, datetime) else (end or "2099-12-31T23:59:59")
-    db_events = event_store.fetch_events_between(start_str, end_str, db_path=DB_PATH)
+    db_events = event_store.fetch_events_between(
+        start_str, end_str, db_path=DB_PATH, pilot_id=pilot_id, data_kind=data_kind,
+    )
     return [
         {
             "text": e.description,
@@ -164,22 +171,24 @@ def fetch_events_placeholder(start=None, end=None, event_list=None):
 # Real version: "then" answer (events up to date X) vs "now" answer (all events)
 # ---------------------------------------------------------------------------
 
-def query_then_placeholder(target_date, event_list=None):
+def query_then_placeholder(target_date, event_list=None, pilot_id=None, data_kind=None):
     """
     Swapped in real Pod D get_belief_then.
     """
     # Normalise target_date to ISO string for timestamp comparison
     td_str = target_date.isoformat() if hasattr(target_date, "isoformat") else str(target_date)
-    all_events = fetch_events_placeholder(event_list=event_list)
+    all_events = fetch_events_placeholder(event_list=event_list, pilot_id=pilot_id,
+                                          data_kind=data_kind or ("real" if pilot_id else None))
     return get_belief_then(all_events, td_str, dict(STARTING_STATE), update_state_placeholder)
 
 
-def query_now_placeholder(target_date, event_list=None):
+def query_now_placeholder(target_date, event_list=None, pilot_id=None, data_kind=None):
     """
     Swapped in real Pod D get_belief_now.
     """
     td_str = target_date.isoformat() if hasattr(target_date, "isoformat") else str(target_date)
-    all_events = fetch_events_placeholder(event_list=event_list)
+    all_events = fetch_events_placeholder(event_list=event_list, pilot_id=pilot_id,
+                                          data_kind=data_kind or ("real" if pilot_id else None))
     return get_belief_now(all_events, td_str, dict(STARTING_STATE), update_state_placeholder)
 
 
@@ -191,13 +200,20 @@ def cmd_add_event(args):
     try:
         if not args.text or not args.text.strip():
             raise ValueError("event text must not be empty")
+        if args.data_kind == "real" and (not args.pilot_id or not args.input_id):
+            raise ValueError("real pilot submission requires --pilot-id and --input-id")
         timestamp = args.at or datetime.now(timezone.utc).isoformat(timespec="seconds")
+        datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
         signal = interpret_event_placeholder(args.text)
-        event = add_event_placeholder(args.text, signal, timestamp=timestamp)
+        event = add_event_placeholder(
+            args.text, signal, timestamp=timestamp, pilot_id=args.pilot_id,
+            input_id=args.input_id, data_kind=args.data_kind,
+        )
         trace_id = log_event(
             pilot_id=args.pilot_id, input_id=args.input_id, component="pod-e",
             event_type="pilot_event", status="accepted", stage="persisted",
             message="Event understood, state-compatible, and appended to storage.", text=args.text,
+            event_id=event.get("id"),
         )
         print(f"Added event: \"{event['text']}\" at {event['timestamp']}")
         print(f"Trace ID: {trace_id}")
@@ -216,18 +232,18 @@ def cmd_query(args):
         target_date = datetime.fromisoformat(args.date.replace("Z", "+00:00"))
         if len(args.date) == 10:
             target_date = target_date.replace(hour=23, minute=59, second=59, tzinfo=timezone.utc)
-        then_state = query_then_placeholder(target_date)
-        now_state = query_now_placeholder(target_date)
+        then_state = query_then_placeholder(target_date, pilot_id=args.pilot_id, data_kind=args.data_kind)
+        now_state = query_now_placeholder(target_date, pilot_id=args.pilot_id, data_kind=args.data_kind)
     except Exception as exc:
         trace_id = log_event(
-            pilot_id=None, input_id=None, component="pod-e", event_type="query",
+            pilot_id=args.pilot_id, input_id=None, component="pod-e", event_type="query",
             status="rejected", stage="query", error_code=type(exc).__name__,
             message=str(exc), text=args.date,
         )
         raise SystemExit(f"Query failed. Trace ID: {trace_id}. Error: {exc}")
 
     trace_id = log_event(
-        pilot_id=None, input_id=None, component="pod-e", event_type="query",
+        pilot_id=args.pilot_id, input_id=None, component="pod-e", event_type="query",
         status="accepted", stage="query", message="Then/now state replay completed.", text=args.date,
     )
     print(f"\n--- What we believed THEN (as of {args.date}) ---")
@@ -290,9 +306,11 @@ def main():
 
     p_add = subparsers.add_parser("add-event", help="Add a new event")
     p_add.add_argument("text", help="Plain-text description of the event")
-    p_add.add_argument("--pilot-id", help="Pseudonymous pilot identifier for observability only")
-    p_add.add_argument("--input-id", help="Caller-supplied input identifier for safe reproduction")
+    p_add.add_argument("--pilot-id", help="Pseudonymous pilot identifier; required for real pilot data")
+    p_add.add_argument("--input-id", help="Submission ID; required for real pilot data")
     p_add.add_argument("--at", help="ISO-8601 event time; defaults to current UTC time")
+    p_add.add_argument("--data-kind", choices=("real", "synthetic"), default="real",
+                       help="Label synthetic validation explicitly; real is the default")
     p_add.set_defaults(func=cmd_add_event)
 
     p_query = subparsers.add_parser(
@@ -301,6 +319,10 @@ def main():
     p_query.add_argument(
         "date", help="Target date, e.g. 2026-07-02 or 2026-07-02T12:00:00"
     )
+    p_query.add_argument("--pilot-id", required=True,
+                         help="Restrict replay to one pseudonymous real pilot")
+    p_query.add_argument("--data-kind", choices=("real", "synthetic"), default="real",
+                         help="Use synthetic only for explicitly labelled validation data")
     p_query.set_defaults(func=cmd_query)
 
     p_demo = subparsers.add_parser("demo", help="Run the full scripted demo")

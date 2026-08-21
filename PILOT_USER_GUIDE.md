@@ -25,9 +25,8 @@ python3 cli.py add-event --pilot-id pilot-01 --input-id day-1 "your event in pla
 
 ### Examples of real events (these are just format examples — write YOUR own):
 ```bash
-python3 cli.py add-event "had a tough code review that went on much longer than expected"
-python3 cli.py add-event "finished the report I'd been stuck on for two days"
-python3 cli.py add-event "argument with a teammate about project direction, still unresolved"
+python3 cli.py add-event --pilot-id pilot-01 --input-id day-1 "had a tough code review that went on much longer than expected"
+python3 cli.py add-event --pilot-id pilot-01 --input-id day-2 "finished the report I'd been stuck on for two days"
 ```
 
 ### What counts as an event:
@@ -74,3 +73,16 @@ If the tool asks you something unexpected, screenshot it and send it.
 ## Questions
 
 Contact the Pod E lead directly.
+
+## Operations after collection
+
+The lead registers opaque IDs in `pilot_roster.md`, then runs:
+
+```bash
+python3 inspect_pilot_data.py --start YYYY-MM-DD --demo2
+python3 inspect_pilot_data.py --start YYYY-MM-DD --demo2 --json
+```
+
+Only records labelled `real` with a pilot ID are included. Synthetic and legacy
+unattributed records are reported separately and excluded. `NO_QUALIFYING_PATTERN`
+is a normal result: do not manufacture Demo 2 evidence.
