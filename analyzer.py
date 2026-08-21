@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Optional
 
 from pydantic import ValidationError
@@ -97,6 +98,10 @@ def analyze_event(event: str, max_retries: Optional[int] = None) -> dict:
                 "analyze_event: provider error on attempt %d/%d for event=%r: %s",
                 attempt, retries, event, last_error,
             )
+            if attempt < retries:
+                delay = settings.retry_initial_seconds * (2 ** (attempt - 1))
+                logger.info("analyze_event: retrying provider request in %.1f seconds", delay)
+                time.sleep(delay)
 
     _event_logger.log(event, raw_response, None, error=last_error)
     raise RuntimeError(

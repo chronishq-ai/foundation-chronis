@@ -13,6 +13,7 @@ Format: timestamp | user | raw input | what happened | handled or broke?
 | 2026-08-17T20:14 | Pod B (system) | 429 RESOURCE_EXHAUSTED | Free-tier rate limit exceeded mid-demo run (5 req/min) | **Handled** — next retry succeeded on its own after delay; fallback caught the one that exhausted |
 | 2026-08-21T13:35 | synthetic fixture | empty input | Rejected before provider invocation; structured log includes trace ID and input hash, not raw input. | **Handled** — no event stored |
 | 2026-08-21T13:35 | synthetic fixture | live provider request | DNS unavailable inside restricted sandbox; same request succeeded with approved external network. | **Handled** — no event stored during verification |
+| 2026-08-21T13:37 | synthetic fixture | provider → storage → query | Live Gemini request returned 200; validated signals were appended to a disposable database and replayed successfully. | **Handled** — verified end-to-end; explicitly not pilot data |
 
 There are currently no real-pilot entries in `events.db`; the legacy `test event storage`
 record is synthetic and must not be used as pilot evidence.

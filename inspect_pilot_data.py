@@ -65,7 +65,7 @@ def replay(events, up_to_ts=None):
 def main():
     events = load_all_events()
     print(f"\n=== Pilot Data Summary ===")
-    print(f"Total events in events.db: {len(events)}")
+    print(f"Total events in {DB_PATH}: {len(events)}")
 
     if not events:
         print("\nNo pilot data found. Phase 2 has not been completed.")

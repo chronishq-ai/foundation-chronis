@@ -33,6 +33,7 @@ class Settings:
     groq_model: str
     active_provider: str  # "gemini" | "anthropic" | "groq"
     max_retries: int
+    retry_initial_seconds: float
     log_path: str
 
 
@@ -46,6 +47,7 @@ def load_settings() -> Settings:
         groq_model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
         active_provider=os.getenv("LLM_PROVIDER", "gemini").lower(),
         max_retries=int(os.getenv("MAX_RETRIES", "3")),
+        retry_initial_seconds=float(os.getenv("RETRY_INITIAL_SECONDS", "1")),
         log_path=os.getenv("LOG_PATH", "logs/outputs.json"),
     )
 

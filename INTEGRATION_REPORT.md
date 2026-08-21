@@ -24,6 +24,8 @@ observations after a real pilot.
 
 Live natural-language ingestion requires a configured supported LLM provider and
 its credentials. The deterministic demo and Pod A/C/D integration tests do not.
+Provider failures use bounded exponential backoff (1s, then 2s by default) before
+returning an explicit rejection and trace ID; they are never converted to a neutral event.
 
 ## Clean-state rehearsal
 

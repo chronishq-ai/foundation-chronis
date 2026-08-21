@@ -4,7 +4,9 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
+import analyzer
 import cli
 from core.update_state import update_state
 from integration_log import log_event
@@ -59,6 +61,17 @@ class PodEIntegrationTests(unittest.TestCase):
         with self.assertRaises(SystemExit) as result:
             cli.cmd_add_event(Args())
         self.assertIn("event text must not be empty", str(result.exception))
+
+    def test_provider_failure_uses_bounded_backoff_then_raises(self):
+        class FailingProvider:
+            def generate(self, prompt):
+                raise RuntimeError("temporary provider outage")
+        analyzer.set_provider(FailingProvider())
+        with patch("analyzer.time.sleep") as sleep:
+            with self.assertRaises(RuntimeError):
+                analyzer.analyze_event("synthetic outage fixture", max_retries=3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1.0, 2.0])
+        analyzer.set_provider(None)
 
 
 if __name__ == "__main__":
