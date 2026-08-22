@@ -1,7 +1,7 @@
 import pytest
-from src.frontier.provenance_pipeline import ProvenanceManager, Belief
-from src.frontier.conflict_resolution import ConflictManager
-from src.frontier.identity_graph import PrivateIdentityGraph
+from frontier.provenance_pipeline import ProvenanceManager, Belief
+from frontier.conflict_resolution import ConflictManager
+from frontier.identity_graph import PrivateIdentityGraph
 
 def test_provenance_pipeline():
     """Validates Observation -> Claim promotion rules (Sprint 20)."""
@@ -17,7 +17,7 @@ def test_provenance_pipeline():
     assert claim is not None
     assert claim.claim_id == "claim_b2"
 
-from src.frontier.interfaces.claims_store import ClaimsStoreProvider
+from frontier.interfaces.claims_store import ClaimsStoreProvider
 
 class MockClaimsStore(ClaimsStoreProvider):
     def __init__(self):
@@ -51,8 +51,8 @@ def test_identity_graph_isolation():
         graph1.merge_graphs(graph2)
 
 from claims_engine.claim_levels import Claim, ClaimLevel, GateEvaluation
-from src.frontier.claims_engine_adapter import ClaimsEngineAdapter
-from src.frontier.provenance_pipeline import ProvenanceRecord
+from frontier.claims_engine_adapter import ClaimsEngineAdapter
+from frontier.provenance_pipeline import ProvenanceRecord
 
 def test_claims_engine_integration():
     """Integration test: ClaimsEngine -> ClaimsStoreProvider -> ConflictManager"""
@@ -79,3 +79,105 @@ def test_claims_engine_integration():
     
     assert adapter.get_claim_status(claim.claim_id) == "UNCLEAR"
     assert pr.status == "UNCLEAR"
+
+def test_identity_confidence_floor():
+    """S1720.5 T1: Validates identity promotion missing confidence floor (Tests only)."""
+    graph = PrivateIdentityGraph("u1")
+    belief_low = Belief(id="b1", confidence=0.2, source_inference_ids=[])
+    
+    # Currently unconditionally writes to nodes (documents the bug).
+    graph.add_explicit_name_association("vis1", "voc1", "John", belief_low)
+    assert len(graph.nodes) == 1
+
+def test_identity_competing_inference():
+    """S1720.5 T2: Validates missing competing Inference objects (Tests only)."""
+    # Documents the gap: no distinct Inference type for competing identities
+    # The current code doesn't even have a resolution method, so we just
+    # document that there is no way to represent competing inferences.
+    pass
+
+def test_identity_unresolved_node():
+    """S1720.5 T3: Validates missing unresolved node path (Tests only)."""
+    graph = PrivateIdentityGraph("u1")
+    # Documents the gap: no add_unresolved_cluster exists
+    with pytest.raises(AttributeError):
+        graph.add_unresolved_cluster("vis2", "voc2")
+
+def test_systemic_cross_user_isolation():
+    """S1720.5 T4: Systemic cross-user property test (Tests only)."""
+    graphA = PrivateIdentityGraph("uA")
+    belief = Belief(id="b1", confidence=0.9, source_inference_ids=[])
+    graphA.add_explicit_name_association("visA", "vocA", "Alice", belief)
+    
+    graphB = PrivateIdentityGraph("uB")
+    
+    # name lookups
+    # If user B tries to look up from user A's graph directly:
+    res = graphA.get_entity_by_name("Alice")
+    # Ideally this should check user context. Currently it just returns it if we call the object.
+    # The test is documenting that cross-user queries shouldn't be possible in the broader system.
+    # We will simulate a cross-user query via an orchestrator or adapter if it existed,
+    # but here we test the graph merge.
+    with pytest.raises(PermissionError):
+        graphB.merge_graphs(graphA)
+
+from frontier.visual_memory import VisualMemoryIndex, SelfHostedCLIPEncoder, MockFAISS
+import numpy as np
+
+def test_visual_embedding_randomness():
+    """S1720.8 T1: Validates visual embedding fallback returns random vectors (Tests only)."""
+    encoder = SelfHostedCLIPEncoder()
+    # Encode identical data twice
+    vec1 = encoder.encode("identical_image_data")
+    vec2 = encoder.encode("identical_image_data")
+    
+    # Documents the bug: currently they are different (random)
+    assert not np.array_equal(vec1, vec2)
+
+def test_visual_embedding_namespace_and_version():
+    """S1720.8 T3: Validates stored vector record fields (Tests only)."""
+    # Documents the gap: missing embedding_version and user_id fields on individual records
+    encoder = SelfHostedCLIPEncoder()
+    mock_index = MockFAISS(encoder.dimension)
+    index = VisualMemoryIndex("u1", encoder, index_override=mock_index)
+    index.process_and_store([{"salience_level": "L2", "frame_data": "data", "canonical_record_pointer": "p1"}])
+    
+    assert len(index.entries) == 1
+    entry = index.entries[0]
+    # These fields are currently missing:
+    assert "embedding_version" not in entry
+    assert "user_id" not in entry
+
+def test_visual_memory_deletion():
+    """S1720.8 T4: Validates visual memory deletion (Tests only)."""
+    encoder = SelfHostedCLIPEncoder()
+    mock_index = MockFAISS(encoder.dimension)
+    index = VisualMemoryIndex("u1", encoder, index_override=mock_index)
+    index.process_and_store([{"salience_level": "L2", "frame_data": "data", "canonical_record_pointer": "p1"}])
+    
+    # Delete index
+    index.delete_index()
+    res = index.retrieve(np.random.rand(512).astype('float32'))
+    assert len(res) == 0
+
+from frontier.central_retrieval_core import CentralRetrievalCore
+from frontier.memory_orchestrator import MemoryOrchestrator
+
+def test_user_scope_propagation():
+    """S1720.9 T1: Validates user_id enforcement on public methods (Tests only)."""
+    # Documents the gap: missing authorization boundaries using the user_id parameter.
+    class DummyVisualRetrievalScope:
+        def search_visual(self, user_id, query):
+            # Suppose this should raise if user_id doesn't match the record owner,
+            # but currently it returns records from any owner.
+            return [{"canonical_record_pointer": "ptr1", "confidence": 0.9, "owner": "userB"}]
+
+    orchestrator = MemoryOrchestrator(DummyVisualRetrievalScope())
+    core = CentralRetrievalCore(orchestrator)
+    
+    # Query for userA, returns userB's record because user_id isn't enforced downstream
+    res = core.retrieve("query", "past", "assistant", "userA", {"consent_tier": 2})
+    # If the system were secure, this would raise PermissionError or return empty.
+    # Currently it just blindly returns the cross-user record.
+    assert len(res.get("evidence_items", [])) == 1
+

@@ -20,9 +20,8 @@ class MemoryOrchestrator:
         overall_confidence = 1.0
         
         for v in visual_results:
-            if v.get("confidence", 0) < 0.5:
-                continue
-                
+            # S1720.2: The lowest tier (<0.5) is never silently dropped; threaded through.
+
             evidence_items.append({
                 "modality": "visual",
                 "content_pointer": v.get("canonical_record_pointer"),

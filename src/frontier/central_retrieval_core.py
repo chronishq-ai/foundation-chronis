@@ -23,4 +23,16 @@ class CentralRetrievalCore:
             query_type=query_type
         )
         
+        # Merge, dedup, and rank logic
+        evidence_items = evidence_package.get("evidence_items", [])
+        
+        unique_items = {}
+        for item in evidence_items:
+            ptr = item.get("content_pointer")
+            if ptr not in unique_items or item.get("confidence", 0) > unique_items[ptr].get("confidence", 0):
+                unique_items[ptr] = item
+                
+        ranked_items = sorted(unique_items.values(), key=lambda x: x.get("confidence", 0), reverse=True)
+        evidence_package["evidence_items"] = ranked_items
+        
         return evidence_package

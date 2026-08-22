@@ -36,7 +36,8 @@ class ProvenanceManager:
     """
     Manages the Observation -> Feature -> Inference -> Belief -> Claim pipeline (Sprint 20).
     """
-    def __init__(self):
+    def __init__(self, claims_store=None):
+        self.claims_store = claims_store
         self.confidence_floors = {
             "identity_match": 0.85,
             "behavioral_pattern": 0.70
@@ -56,16 +57,21 @@ class ProvenanceManager:
             source_belief_ids=[belief.id]
         )
 
-    def explain_retrofitted(self, claim_data: Dict[str, Any]) -> Dict[str, Any]:
+    def explain_retrofitted(self, claim_id: str) -> Dict[str, Any]:
         """
         Retrofitted explain() API surfacing observation, inference, belief, and claim.
+        Accepts claim_id, retrieves canonical provenance from the store. No caller-provided fabricated provenance.
         """
+        if not self.claims_store:
+            return {"error": "Claims store not configured"}
+            
+        claim_data = self.claims_store.get_claim(claim_id)
         if not claim_data:
             return {"error": "Claim not found"}
             
         return {
             "claim": claim_data,
-            "belief_confidence": 0.92,
-            "inference": "Match found in historical context",
-            "observation": "Visual frame 123"
+            "belief_confidence": getattr(claim_data, "confidence", 0.0),
+            "inference": getattr(claim_data, "inference", "No inference data"),
+            "observation": getattr(claim_data, "observation", "No observation data")
         }
