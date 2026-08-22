@@ -1,5 +1,7 @@
 import numpy as np
-from domain_emergence.synthetic_hssm import generate_synthetic_hssm_output
+# RELOCATED (S56.6): fixture moved out of the production import path
+# (domain_emergence/) -- test-fixture-only now.
+from tests.fixtures.synthetic_hssm_fixture import generate_synthetic_hssm_output
 
 
 def test_shapes_match_contract():

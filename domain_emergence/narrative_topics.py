@@ -5,17 +5,19 @@ Bible Part 5.8 specifies BERTopic in online/streaming mode for the narrative
 side of domain emergence. The real `bertopic` package crashes on import in
 this dev sandbox (SIGBUS, binary/numba incompatibility) and its default
 embedding backend requires downloading a model from huggingface.co, which
-this sandbox's network policy does not allow. Neither issue is doctrinal --
-try `pip install bertopic sentence-transformers river` in your own Windows
-venv; if it imports cleanly there, swap NarrativeTopicModel below for the
-BERTopicWrapper class at the bottom of this file (same interface:
-.partial_fit(docs) / .topics_). BERTopicWrapper is UNTESTED -- only
-structurally reviewed against BERTopic's documented online-mode API, never
-actually run, since bertopic can't import in this sandbox at all. Run its
-own smoke test before trusting it.
+this sandbox's network policy does not allow. Neither issue is doctrinal.
 
-Until then, this module implements the SAME algorithmic shape the doctrine
-calls for, without the bertopic dependency:
+S56.9 UPDATE: `create_topic_model()`'s default is now `use_bertopic=True`
+(BERTopicWrapper, at the bottom of this file), flipped per explicit
+instruction. This is NOT a claim that BERTopicWrapper has been verified --
+it has never been run successfully in any environment available here; it is
+only structurally reviewed against BERTopic's documented online-mode API.
+BERTopicWrapper raises a loud UserWarning on every instantiation for exactly
+this reason. Run its own smoke test (`pip install bertopic
+sentence-transformers river` somewhere bertopic actually imports, e.g. off
+this sandbox) before trusting its output. Pass `use_bertopic=False` to get
+NarrativeTopicModel -- the lightweight, fully-tested implementation below,
+and the module's previous default:
   - embed short texts (hashing-trick TF vectors -- deterministic, no network,
     no pretrained model download; stands in for the semantic embedding step)
   - cluster ONLINE/STREAMING via river.cluster.DBSTREAM (density-based,
@@ -29,6 +31,7 @@ skipped entirely -- they contribute no narrative signal, by design.
 """
 
 from __future__ import annotations
+import warnings
 import numpy as np
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -38,6 +41,57 @@ from sklearn.feature_extraction.text import HashingVectorizer
 
 
 NOISE_TOPIC = -1
+
+# HONESTY FLAG (S56.9): flipped per explicit instruction, NOT because
+# BERTopicWrapper has been verified. It has not been smoke-tested even
+# once -- bertopic SIGBUS-crashes on import in this dev sandbox and its
+# default embedder needs huggingface.co network access this sandbox
+# also blocks, so there was no way to actually run it here before
+# flipping this default. See BERTopicWrapper's docstring for what WAS
+# checked (structural review against BERTopic's documented online-mode
+# API) versus what was NOT (any real execution). This class raises a
+# loud UserWarning on every instantiation for exactly this reason --
+# do not silence/filter that warning without first running
+# BERTopicWrapper's own smoke test in an environment where bertopic
+# actually imports.
+_BERTOPIC_UNVERIFIED_WARNING = (
+    "S56.9: create_topic_model() now defaults to BERTopicWrapper "
+    "(use_bertopic=True). BERTopicWrapper is UNTESTED -- it has never "
+    "been run successfully; bertopic SIGBUS-crashes on import in the "
+    "sandbox this was built in, and its default embedder needs "
+    "huggingface.co network access that sandbox also blocked. This "
+    "default was flipped on explicit instruction, not because the "
+    "class was verified. Run BERTopicWrapper's own smoke test before "
+    "trusting output from this path. Pass use_bertopic=False to get "
+    "the lightweight (tested, previously-default) NarrativeTopicModel "
+    "instead."
+)
+
+
+def create_topic_model(use_bertopic: bool = True, **kwargs):
+    """S56.9 wiring point: the module previously had no way to select
+    BERTopicWrapper -- callers always got NarrativeTopicModel regardless
+    of what Sprint 6's spec requires. This factory makes the choice
+    explicit and callable in one place.
+
+    use_bertopic=True (DEFAULT, flipped per S56.9 instruction) returns
+    BERTopicWrapper -- the real BERTopic path Bible Part 5.8 specifies.
+    UNVERIFIED: raises a loud UserWarning on instantiation (see
+    _BERTOPIC_UNVERIFIED_WARNING) because this class has never actually
+    been run -- see its docstring. Flipping this default was done on
+    explicit request, ahead of the real smoke test / senior
+    confirmation the pack's Ownership Model would otherwise require
+    first; treat any output from this path as unverified until that
+    smoke test happens in an environment where bertopic can import.
+
+    use_bertopic=False returns NarrativeTopicModel -- the lightweight
+    hashing-trick + river streaming clusterer documented above. This
+    was the previous default and remains fully tested; pass this
+    explicitly if you need the previously-default, known-working
+    behavior."""
+    if use_bertopic:
+        return BERTopicWrapper(**kwargs)
+    return NarrativeTopicModel(**kwargs)
 
 
 @dataclass
@@ -131,14 +185,25 @@ class NarrativeTopicModel:
 class BERTopicWrapper:
     """Real BERTopic in online/streaming mode, per Bible 5.8's literal spec.
 
-    UNTESTED -- bertopic cannot import in this sandbox (SIGBUS on import)
-    and its default embedder needs huggingface.co (blocked here), so this
-    class has only been reviewed against BERTopic's documented online-mode
-    API (umap_model=IncrementalPCA, hdbscan_model=river cluster via the
-    River wrapper, vectorizer_model=OnlineCountVectorizer), never actually
-    run. Try it in your Windows venv where network access to huggingface.co
-    works; if `pip install bertopic sentence-transformers river` succeeds
-    and this smoke-tests clean, swap it in for NarrativeTopicModel above.
+    UNTESTED end-to-end -- bertopic cannot import in this sandbox (SIGBUS
+    on import) and its default embedder needs huggingface.co (blocked
+    here), so this class has only been reviewed against BERTopic's
+    documented online-mode API, never actually run start-to-finish.
+
+    CONFIRMED REAL BUG, NOW FIXED (not hypothetical): the previous
+    version of this class did `from bertopic.cluster import River` --
+    that name has never existed in bertopic.cluster (confirmed against
+    BERTopic's own docs/source: bertopic.cluster only ships BaseCluster).
+    On a real Windows install with bertopic actually present, this
+    failed immediately with ImportError, proving it. BERTopic's own
+    "Online Topic Modeling" docs show `River` is not an importable
+    class at all -- it's a ~10-line wrapper YOU write, adapting any
+    river.cluster model to the fit/predict interface BERTopic's
+    hdbscan_model slot expects. `_RiverClusterWrapper` below is that
+    wrapper, copied from BERTopic's own documented example. This is a
+    genuine fix to a real bug, not just a version-pin issue -- but the
+    class remains UNVERIFIED end-to-end (no environment available here
+    has successfully run bertopic to confirm this now actually works).
 
     Same interface contract as NarrativeTopicModel: .partial_fit(docs)
     takes a batch (None = silent episode, skipped), returns per-doc labels
@@ -146,14 +211,19 @@ class BERTopicWrapper:
     """
 
     def __init__(self, n_components: int = 5, seed: int | None = None):
+        # Loud warning BEFORE the risky imports below, so it fires even
+        # if bertopic then crashes on import -- caller/log should never
+        # be left wondering whether this path was ever verified.
+        warnings.warn(_BERTOPIC_UNVERIFIED_WARNING, UserWarning, stacklevel=2)
+
         from bertopic import BERTopic
         from bertopic.vectorizers import OnlineCountVectorizer
-        from bertopic.cluster import River
         from river import cluster as river_cluster
+        from river import stream as river_stream
         from sklearn.decomposition import IncrementalPCA
 
         umap_model = IncrementalPCA(n_components=n_components)
-        cluster_model = River(river_cluster.DBSTREAM())
+        cluster_model = _RiverClusterWrapper(river_cluster.DBSTREAM(), river_stream)
         vectorizer_model = OnlineCountVectorizer(stop_words="english")
 
         self.model = BERTopic(
@@ -187,3 +257,27 @@ class BERTopicWrapper:
         if not words:
             return []
         return [w for w, _ in words[:top_n_words]]
+
+
+class _RiverClusterWrapper:
+    """Adapts any river.cluster incremental model to the fit/transform
+    interface BERTopic's `hdbscan_model` slot expects, so it can be used
+    for genuinely online clustering. Copied from BERTopic's own
+    documented "Online Topic Modeling" example (bertopic.readthedocs.io) --
+    NOT importable from the bertopic package itself (see class docstring
+    above for why the previous `from bertopic.cluster import River` was
+    a real, confirmed bug)."""
+
+    def __init__(self, model, river_stream_module):
+        self.model = model
+        self._stream = river_stream_module
+
+    def partial_fit(self, umap_embeddings):
+        for umap_embedding, _ in self._stream.iter_array(umap_embeddings):
+            self.model.learn_one(umap_embedding)
+
+        labels = []
+        for umap_embedding, _ in self._stream.iter_array(umap_embeddings):
+            labels.append(self.model.predict_one(umap_embedding))
+        self.labels_ = labels
+        return self

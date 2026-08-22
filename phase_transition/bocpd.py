@@ -52,3 +52,26 @@ class ChangepointDetector:
         CANDIDATES only — feeds condition 1 of the 3-condition gate."""
         mass = self.short_runlength_mass(data, window=window)
         return [t for t, p in enumerate(mass) if p > threshold]
+
+
+def hazard_sensitivity_sweep(
+    data: list[float],
+    hazard_values: list[float],
+    window: int = 3,
+    threshold: float = 0.5,
+    mean0: float = 0.0,
+    var0: float = 2.0,
+    varx: float = 1.0,
+) -> dict:
+    """S56.3 (Harnesses tier, intern-owned): sweeps a fixed set of hazard
+    rates over the SAME data/seed and reports the resulting candidate
+    changepoint count/timing per hazard, so a single arbitrary hazard's
+    influence on timing is visible rather than assumed. Diagnostic report
+    only -- no pass/fail gate, senior interprets and sets any calibration
+    policy (per S56.3 Test Sheet: 'output is a report only')."""
+    curve = {}
+    for hazard in hazard_values:
+        det = ChangepointDetector(hazard=hazard, mean0=mean0, var0=var0, varx=varx)
+        cps = det.candidate_changepoints(data, window=window, threshold=threshold)
+        curve[hazard] = {"n_candidates": len(cps), "candidate_timesteps": cps}
+    return curve

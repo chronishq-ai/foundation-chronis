@@ -16,6 +16,21 @@ def test_should_split_single_spike_not_sustained():
     assert should_split(within, between, min_sustained_windows=2) is False
 
 
+def test_should_split_scattered_non_contiguous_not_sustained():
+    """S56.8 regression: 2 qualifying windows total but NOT contiguous
+    (window 0 and window 3) must NOT trigger 'sustained' split -- this
+    is the exact case the pre-fix total-count logic got wrong."""
+    within = [5.0, 1.0, 1.0, 5.0]
+    between = [2.0, 5.0, 5.0, 2.0]  # windows 0 and 3 qualify, not adjacent
+    assert should_split(within, between, min_sustained_windows=2) is False
+
+
+def test_should_split_genuine_contiguous_run_triggers():
+    within = [1.0, 5.0, 6.0, 1.0]
+    between = [5.0, 2.0, 2.0, 5.0]  # windows 1,2 qualify, contiguous
+    assert should_split(within, between, min_sustained_windows=2) is True
+
+
 def test_should_split_mismatched_lengths_raises():
     with pytest.raises(ValueError):
         should_split([1.0, 2.0], [1.0])

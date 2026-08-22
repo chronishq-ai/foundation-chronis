@@ -37,16 +37,23 @@ class DomainRecord:
 def should_split(within_var_by_window: list, between_var_by_window: list,
                   min_sustained_windows: int = 2) -> bool:
     """A split is confirmed only if within-cluster variance exceeds
-    between-cluster variance in at least `min_sustained_windows`
-    consecutive-or-total windows (doctrine says 'sustained', not a single
-    spike) -- checked as total count of qualifying windows, not
-    necessarily contiguous, since window cadence/spacing is caller-defined."""
+    between-cluster variance for `min_sustained_windows` CONTIGUOUS
+    windows (S56.8 fix: doctrine says 'sustained', which means an
+    unbroken run, not scattered total occurrences over the whole
+    history -- a qualifying window in month 1 and another in month 6
+    is not 'sustained'). Requires the longest contiguous run of
+    qualifying windows to meet the bar."""
     if len(within_var_by_window) != len(between_var_by_window):
         raise ValueError("within_var_by_window and between_var_by_window must be same length")
-    exceed_count = sum(
-        1 for w, b in zip(within_var_by_window, between_var_by_window) if w > b
-    )
-    return exceed_count >= min_sustained_windows
+    longest_run = 0
+    current_run = 0
+    for w, b in zip(within_var_by_window, between_var_by_window):
+        if w > b:
+            current_run += 1
+            longest_run = max(longest_run, current_run)
+        else:
+            current_run = 0
+    return longest_run >= min_sustained_windows
 
 
 def should_merge(

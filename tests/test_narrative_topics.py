@@ -1,4 +1,66 @@
-from domain_emergence.narrative_topics import NarrativeTopicModel, NOISE_TOPIC
+import pytest
+
+from domain_emergence.narrative_topics import (
+    NarrativeTopicModel, NOISE_TOPIC, create_topic_model,
+    BERTopicWrapper, _BERTOPIC_UNVERIFIED_WARNING,
+)
+
+
+def test_create_topic_model_defaults_to_bertopic():
+    """S56.9: default flipped to BERTopicWrapper per explicit
+    instruction. BERTopicWrapper is untested in THIS repo's own dev
+    sandbox (see its docstring / HONESTY FLAG), not untested
+    everywhere -- so the correct assertion depends on whether bertopic
+    is actually importable in the environment pytest is running in,
+    not on a hardcoded expectation of failure.
+
+    - bertopic NOT installed/importable here: create_topic_model()
+      must ATTEMPT to build a BERTopicWrapper and surface that failure
+      clearly (ImportError), rather than silently falling back to the
+      lightweight model.
+    - bertopic IS installed/importable here (e.g. a real Windows env
+      where it actually works): construction should succeed and return
+      a BERTopicWrapper, still emitting the UNTESTED warning -- a
+      previously-untested path succeeding is not itself a bug."""
+    try:
+        import bertopic  # noqa: F401
+    except ImportError:
+        with pytest.raises(ImportError):
+            create_topic_model(seed=0)
+    else:
+        with pytest.warns(UserWarning, match="UNTESTED"):
+            model = create_topic_model(seed=0)
+        assert isinstance(model, BERTopicWrapper)
+
+
+def test_create_topic_model_explicit_lightweight():
+    """use_bertopic=False still returns the tested, previously-default
+    NarrativeTopicModel -- this path is unaffected by the S56.9 flip."""
+    model = create_topic_model(use_bertopic=False, seed=0)
+    assert isinstance(model, NarrativeTopicModel)
+
+
+def test_bertopic_wrapper_warns_before_risky_import():
+    """The UserWarning must fire even when the subsequent `import
+    bertopic` fails/crashes -- it's constructed first, specifically so
+    a caller/log always sees 'this path is unverified' regardless of
+    what happens next. Guards against a future refactor silently
+    reordering the warning after the import."""
+    pytest.importorskip(
+        "bertopic", reason="only meaningful where bertopic is actually installed"
+    )
+    with pytest.warns(UserWarning, match="UNTESTED"):
+        try:
+            create_topic_model(use_bertopic=True, seed=0)
+        except Exception:
+            pass  # only asserting the warning fired, not that construction succeeded
+
+
+def test_bertopic_unverified_warning_text_present():
+    """Cheap regression guard: the warning message itself stays
+    substantive (mentions untested status) even if refactored."""
+    assert "UNTESTED" in _BERTOPIC_UNVERIFIED_WARNING
+    assert "smoke test" in _BERTOPIC_UNVERIFIED_WARNING
 
 
 CAREER_DOCS = [

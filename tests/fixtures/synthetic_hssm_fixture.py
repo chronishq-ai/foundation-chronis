@@ -1,4 +1,10 @@
 """
+RELOCATED (S56.6): moved out of the production import path
+(domain_emergence/) into tests/fixtures/. This is now test-fixture-only
+code -- generate_synthetic_hssm_output() must never be imported from a
+production module. Use domain_emergence.hssm_adapter for real HSSM
+output instead.
+
 Day 16 — Synthetic HSSM-shaped data generator.
 
 Standalone, no dependency on backbone.hssm. Matches the REAL HSSM output
