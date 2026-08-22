@@ -17,6 +17,36 @@ def test_provenance_pipeline():
     assert claim is not None
     assert claim.claim_id == "claim_b2"
 
+def test_provenance_explain_retrofitted():
+    """S1720.7: Validates explain_retrofitted uses actual store."""
+    class RealFakeStore(ClaimsStoreProvider):
+        def get_claim(self, claim_id):
+            if claim_id == "real_claim":
+                class FakeClaimData:
+                    confidence = 0.88
+                    inference = "real_inf"
+                    observation = "real_obs"
+                return FakeClaimData()
+            return None
+        def update_claim_status(self, c, s): pass
+        def iter_claims(self): yield None
+
+    pm = ProvenanceManager(claims_store=RealFakeStore())
+
+    # Unknown claim -> error
+    res_err = pm.explain_retrofitted("unknown_claim")
+    assert "error" in res_err
+
+    # Real claim -> real provenance
+    res_real = pm.explain_retrofitted("real_claim")
+    assert res_real["belief_confidence"] == 0.88
+    assert res_real["inference"] == "real_inf"
+
+    # Arbitrary caller data cannot fabricate provenance (API doesn't accept it)
+    import inspect
+    sig = inspect.signature(pm.explain_retrofitted)
+    assert "claim_data" not in sig.parameters
+
 from frontier.interfaces.claims_store import ClaimsStoreProvider
 
 class MockClaimsStore(ClaimsStoreProvider):
@@ -41,6 +71,43 @@ def test_conflict_resolution():
     assert conflict.belief_id_1 == "b1"
     assert conflict.belief_id_2 == "b2"
     # Note: b1 and b2 are not deleted.
+
+def test_conflict_resolution_targeted():
+    """S1720.6: Validates targeted apply_teach_correction."""
+    store = MockClaimsStore()
+    cm = ConflictManager(store)
+    b1 = Belief(id="b1", confidence=0.9, source_inference_ids=[])
+    b2 = Belief(id="b2", confidence=0.9, source_inference_ids=[])
+    b3 = Belief(id="b3", confidence=0.9, source_inference_ids=[])
+    b4 = Belief(id="b4", confidence=0.9, source_inference_ids=[])
+    b1.user_id = "userA"
+    b2.user_id = "userA"
+    b3.user_id = "userB"
+    b4.user_id = "userB"
+
+    # Create two separate conflicts
+    conflict1 = cm.resolve_contradiction(b1, b2)
+    conflict2 = cm.resolve_contradiction(b3, b4)
+
+    # Wrong user_id cannot resolve
+    new_belief = Belief(id="new1", confidence=0.99, source_inference_ids=[])
+    cm.apply_teach_correction("wrong_user", conflict1.id, new_belief)
+    assert not conflict1.resolved
+
+    # Correct user_id resolves ONLY target conflict
+    rec = cm.apply_teach_correction("userA", conflict1.id, new_belief)
+
+    assert conflict1.resolved is True
+    assert conflict2.resolved is False  # Other conflict untouched
+
+    # Verify ConflictResolutionRecord properties
+    assert rec.conflict_id == conflict1.id
+    assert rec.user_id == "userA"
+    assert rec.new_belief == new_belief
+    assert rec.__dataclass_params__.frozen is True
+
+    # Previous belief remains retained
+    assert conflict1.belief_id_1 == "b1"
 
 def test_identity_graph_isolation():
     """Validates PrivateIdentityGraph isolation (Sprint 20)."""
@@ -79,6 +146,52 @@ def test_claims_engine_integration():
     
     assert adapter.get_claim_status(claim.claim_id) == "UNCLEAR"
     assert pr.status == "UNCLEAR"
+
+import os
+import dataclasses
+
+
+def test_claims_engine_adapter_persistence():
+    """S1720.10: Validates restart persistence of ClaimsEngineAdapter."""
+    db_path = "test_persistence.jsonl"
+    if os.path.exists(db_path):
+        os.remove(db_path)
+
+    try:
+        adapter1 = ClaimsEngineAdapter(db_path=db_path)
+        claim = Claim.new(
+            user_id="u_pers",
+            domain_id="d1",
+            level=ClaimLevel.LEVEL_0,
+            gate_evaluation=GateEvaluation(level=ClaimLevel.LEVEL_0, admissible=True, checks=[])
+        )
+        adapter1.append_claim_version(claim.claim_id, claim)
+
+        # Verify mutation / deletion is rejected
+        with pytest.raises(PermissionError):
+            adapter1.mutate_claim(claim.claim_id)
+        with pytest.raises(PermissionError):
+            adapter1.delete_claim(claim.claim_id)
+
+        # Simulate restart: new adapter instance, same file
+        adapter2 = ClaimsEngineAdapter(db_path=db_path)
+        restored = adapter2.get_claim(claim.claim_id)
+        assert restored is not None
+        assert restored.user_id == "u_pers"
+        assert restored.claim_id == claim.claim_id
+
+        # Append another version
+        claim_v2 = dataclasses.replace(restored, domain_id="d2")
+        adapter2.append_claim_version(claim.claim_id, claim_v2)
+
+        # Verify both versions retained
+        versions = adapter2._claims[claim.claim_id]
+        assert len(versions) == 2
+        assert versions[0].domain_id == "d1"
+        assert versions[1].domain_id == "d2"
+    finally:
+        if os.path.exists(db_path):
+            os.remove(db_path)
 
 def test_identity_confidence_floor():
     """S1720.5 T1: Validates identity promotion missing confidence floor (Tests only)."""
@@ -133,6 +246,21 @@ def test_visual_embedding_randomness():
     
     # Documents the bug: currently they are different (random)
     assert not np.array_equal(vec1, vec2)
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="S1720.8 T2: Senior-owned gap — fallback encoder is non-deterministic; "
+           "identical inputs produce different vectors. xfail(strict=True) will "
+           "become an error if this ever accidentally passes, catching the regression."
+)
+def test_visual_embedding_consistency():
+    """S1720.8 T2: Documents the expected failure of identical-input consistency (Tests only)."""
+    encoder = SelfHostedCLIPEncoder()
+    # Encoding the same data twice should return identical vectors if deterministic.
+    # The current fallback returns random vectors, so this assertion is expected to fail.
+    vec1 = encoder.encode("identical_image_data")
+    vec2 = encoder.encode("identical_image_data")
+    assert np.array_equal(vec1, vec2)
 
 def test_visual_embedding_namespace_and_version():
     """S1720.8 T3: Validates stored vector record fields (Tests only)."""

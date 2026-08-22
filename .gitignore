@@ -5,6 +5,13 @@ __pycache__/
 # Pytest
 .pytest_cache/
 
+# Python cache
+__pycache__/
+*.pyc
+
+# Pytest
+.pytest_cache/
+
 # Virtual environment
 .venv/
 
@@ -13,3 +20,5 @@ __pycache__/
 
 # MLflow artifacts
 mlruns/
+
+claims_store.jsonl
