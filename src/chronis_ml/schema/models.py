@@ -28,6 +28,33 @@ class MissingReason(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class MissingnessSignals:
+    """Raw, dataset-agnostic signals used to classify *why* a reading is
+    missing, before a loader builds the final `FeatureRecord`.
+
+    This is intentionally separate from `FeatureRecord`: it is the input
+    to the S1.2 missing-reason decision table
+    (`chronis_ml.schema.validation.classify_missing_reason`), not the
+    canonical stored output. A loader that has access to these signals
+    should classify the reason before defaulting to SENSOR_FAILURE.
+
+    All fields default to False so a loader that only has partial signal
+    availability can populate just what it knows and leave the rest at
+    the conservative "no evidence of this" default.
+    """
+
+    imu_stillness: bool = False
+    """True if the IMU shows no meaningful movement for the window."""
+
+    ppg_dropout: bool = False
+    """True if the PPG (heart-rate) sensor produced no usable signal."""
+
+    mic_off_event: bool = False
+    """True if a discrete microphone-off event was recorded for this
+    window (e.g. the participant explicitly paused audio capture)."""
+
+
+@dataclass(frozen=True, slots=True)
 class FeatureMetadata:
     """Metadata describing one canonical feature."""
 
@@ -51,6 +78,11 @@ class FeatureRecord:
     missing_reason: MissingReason | None = None
     unit: str | None = None
     source: str | None = None
+    schema_version: str = "1.0"
+    """Schema version this record was constructed under. Validated
+    against `validation.SUPPORTED_SCHEMA_VERSIONS` — a record built
+    under an unrecognized version is an explicit incompatibility error,
+    never silently accepted (S1.3 requirement)."""
 
 
 @dataclass(frozen=True, slots=True)
