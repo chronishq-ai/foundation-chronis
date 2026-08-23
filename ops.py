@@ -218,7 +218,13 @@ def write_sbom(root: Path | None = None) -> Path:
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",
         "components": [
-            {"name": r["name"], "version": r["version"], "licenses": [{"license": {"id": r["license"]}}]}
+            {
+                "name": r["name"],
+                "version": r["version"],
+                "licenses": [{"license": {"id": r["license"]}}],
+                "properties": [{"name": "boundary", "value": str(r.get("boundary", False)).lower()}],
+                "boundary": r.get("boundary", False),
+            }
             for r in recs
         ],
     }

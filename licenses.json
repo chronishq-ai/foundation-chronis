@@ -1,0 +1,14 @@
+[
+  {"name": "numpy", "version": "2.2.2", "license": "BSD-3-Clause", "use": "arrays", "boundary": true},
+  {"name": "scipy", "version": "1.15.1", "license": "BSD-3-Clause", "use": "t-test", "boundary": true},
+  {"name": "mlflow", "version": "2.20.1", "license": "Apache-2.0", "use": "model log", "boundary": true},
+  {"name": "statsmodels", "version": "0.14.4", "license": "BSD-3-Clause", "use": "hssm stack", "boundary": true},
+  {"name": "pytest", "version": "8.3.4", "license": "MIT", "use": "tests", "boundary": false},
+  {"name": "pip-audit", "version": "2.8.0", "license": "Apache-2.0", "use": "cve check", "boundary": false},
+  {"name": "openai-whisper", "version": "20231117", "license": "MIT", "use": "speech transcription", "boundary": true},
+  {"name": "pyannote.audio", "version": "3.1.1", "license": "MIT", "use": "speaker diarization (Note: pretrained HF model weights carry a separate gated-access agreement out of scope for pip package check)", "boundary": true},
+  {"name": "opensmile", "version": "2.5.0", "license": "audEERING-Research-License", "use": "audio feature extraction", "boundary": true},
+  {"name": "hdbscan", "version": "0.8.33", "license": "BSD-3-Clause", "use": "clustering", "boundary": true},
+  {"name": "bertopic", "version": "0.16.0", "license": "MIT", "use": "topic modeling", "boundary": true},
+  {"name": "bocd", "version": "0.1.1", "license": "BSD-3-Clause", "use": "change point detection", "boundary": true}
+]

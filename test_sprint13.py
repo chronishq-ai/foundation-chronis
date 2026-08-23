@@ -4,7 +4,7 @@ import shutil
 
 import pytest
 
-from chronis_ml.ops import AB, FitReason, HssmQueue, Registry, check_licenses, check_logs, gpu_spec, pins, write_sbom
+from chronis_ml.ops import AB, FitReason, HssmQueue, Registry, check_licenses, check_logs, gpu_spec, pins, write_sbom, LicenseRequiresApprovalError
 from chronis_ml.store import IsolatedModelStore, IsolationError, assert_src_isolated, check_path
 from chronis_ml.train import PersonalLM
 
@@ -110,5 +110,6 @@ def test_gpu_and_ab():
 
 def test_licenses():
     pins()
-    check_licenses()
+    with pytest.raises(LicenseRequiresApprovalError):
+        check_licenses()
     write_sbom()
