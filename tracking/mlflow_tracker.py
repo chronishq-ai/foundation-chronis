@@ -1,12 +1,22 @@
 from datetime import datetime
-from typing import Dict, Any
+from typing import Dict, Any, List
+
+import mlflow
 
 
 class MLflowTracker:
+    """
+    MLflow-based experiment tracker for the Chronis ML pipeline.
+    """
 
-    def __init__(self):
-        self.experiments = []
+    def __init__(self, experiment_name: str = "chronis-foundation"):
+        self.experiment_name = experiment_name
 
+        mlflow.set_experiment(self.experiment_name)
+
+        # Keep a local record as well so the existing interface
+        # remains easy to test.
+        self.experiments: List[Dict[str, Any]] = []
 
     def log_experiment(
         self,
@@ -14,25 +24,55 @@ class MLflowTracker:
         dataset_hash: str,
         parameters: Dict[str, Any],
         metrics: Dict[str, float]
-    ):
+    ) -> None:
+        """
+        Log an experiment to MLflow.
 
-        experiment = {
+        Tracks:
+        - Experiment/run name
+        - Dataset hash
+        - Parameters
+        - Metrics
+        - Timestamp
+        """
 
-            "name": name,
+        timestamp = datetime.now().isoformat()
 
-            "dataset_hash": dataset_hash,
+        with mlflow.start_run(run_name=name):
 
-            "parameters": parameters,
+            # Dataset/version information
+            mlflow.set_tag(
+                "dataset_hash",
+                dataset_hash
+            )
 
-            "metrics": metrics,
+            # Experiment timestamp
+            mlflow.set_tag(
+                "experiment_timestamp",
+                timestamp
+            )
 
-            "timestamp": datetime.now().isoformat()
+            # Hyperparameters / configuration
+            if parameters:
+                mlflow.log_params(parameters)
 
-        }
+            # Evaluation metrics
+            if metrics:
+                mlflow.log_metrics(metrics)
 
-        self.experiments.append(experiment)
+            experiment = {
+                "name": name,
+                "dataset_hash": dataset_hash,
+                "parameters": parameters,
+                "metrics": metrics,
+                "timestamp": timestamp
+            }
 
+            self.experiments.append(experiment)
 
-    def get_experiments(self):
+    def get_experiments(self) -> List[Dict[str, Any]]:
+        """
+        Return experiments logged through this tracker instance.
+        """
 
         return self.experiments
