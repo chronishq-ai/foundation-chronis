@@ -23,6 +23,10 @@ class RegistryGateError(ValueError):
     pass
 
 
+class LicenseRequiresApprovalError(ValueError):
+    pass
+
+
 def check_logs(p: dict[str, Any]) -> None:
     miss = [k for k in NEED if not p.get(k)]
     if miss:
@@ -168,9 +172,39 @@ def pins(root: Path | None = None) -> dict[str, str]:
 def check_licenses(root: Path | None = None) -> None:
     root = root or root_dir()
     recs = json.loads((root / "licenses.json").read_text())
+    ok_boundary_licenses = {"MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "ISC", "PSF-2.0"}
+    
+    # Load approved_with_conditions.json if it exists
+    approved_with_conditions_file = root / "approved_with_conditions.json"
+    approved_names = set()
+    if approved_with_conditions_file.exists():
+        try:
+            conds = json.loads(approved_with_conditions_file.read_text(encoding="utf-8"))
+            for item in conds:
+                if item.get("name") and item.get("approved") is True:
+                    approved_names.add(item["name"].lower())
+        except Exception:
+            pass
+
     for r in recs:
-        if r["license"] not in OK_LICENSES:
-            raise ValueError(r)
+        lic = r["license"]
+        name_lower = r["name"].lower()
+        is_boundary = r.get("boundary", False)
+        if is_boundary:
+            lic_lower = lic.lower()
+            if any(x in lic_lower for x in ("gpl", "agpl", "lgpl")):
+                raise ValueError(f"Copyleft license '{lic}' is strictly forbidden inside trusted boundary: {r}")
+            if lic == "audEERING-Research-License":
+                if name_lower not in approved_names:
+                    raise LicenseRequiresApprovalError(
+                        f"Commercial use of {r['name']} under this license requires a paid commercial "
+                        f"license from audEERING, and this package cannot ship in a commercial product without that in place."
+                    )
+            elif lic not in ok_boundary_licenses:
+                raise ValueError(f"License '{lic}' does not meet lower tolerance standard for trusted boundary: {r}")
+        else:
+            if lic not in OK_LICENSES:
+                raise ValueError(f"License '{lic}' is not in OK_LICENSES: {r}")
     have = {r["name"].lower(): r["version"] for r in recs}
     p = pins(root)
     if any(n not in have or have[n] != v for n, v in p.items()):
