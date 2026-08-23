@@ -89,8 +89,9 @@ def build_behavioral_state_records() -> list:
 
 
 def build_claims() -> list:
-    """One admissible Level 3 claim, one inadmissible Level 3 claim.
-    Behavioral DNA export must include only the first, never the second."""
+    """One admissible Level 3 claim, one inadmissible Level 3 claim, plus
+    a Level 2 claim and a different user's claim -- Behavioral DNA export
+    must filter out all three of the latter, keeping only the first."""
     passing_gates = GateEvaluation(
         level=ClaimLevel.LEVEL_3,
         admissible=True,
@@ -101,6 +102,11 @@ def build_claims() -> list:
         admissible=False,
         checks=[GateCheck(name="divergence_type_unambiguous", passed=False,
                            detail="two type scores within 0.15 of each other")],
+    )
+    level2_gates = GateEvaluation(
+        level=ClaimLevel.LEVEL_2,
+        admissible=True,
+        checks=[GateCheck(name="convergent_level1_patterns", passed=True)],
     )
 
     admissible_claim = Claim(
@@ -123,7 +129,27 @@ def build_claims() -> list:
         created_at=BASE_DATE,
     )
 
-    return [admissible_claim, inadmissible_claim]
+    level2_claim = Claim(
+        claim_id="claim-003",
+        user_id=USER_ID,
+        domain_id="domain-001",
+        level=ClaimLevel.LEVEL_2,
+        dominant_divergence_type="self_protection",
+        gate_evaluation=level2_gates,
+        created_at=BASE_DATE,
+    )
+
+    different_users_claim = Claim(
+        claim_id="claim-004",
+        user_id="user_999",   # NOT user_001 -- must never leak into user_001's export
+        domain_id="domain-005",
+        level=ClaimLevel.LEVEL_3,
+        dominant_divergence_type="aspiration",
+        gate_evaluation=passing_gates,
+        created_at=BASE_DATE,
+    )
+
+    return [admissible_claim, inadmissible_claim, level2_claim, different_users_claim]
 
 
 def build_domains() -> list:
@@ -131,3 +157,57 @@ def build_domains() -> list:
         DomainRecord(domain_id=1, active=True, status="active", confidence=0.82),
         DomainRecord(domain_id=2, active=True, status="candidate", confidence=0.31),
     ]
+
+
+def build_anomaly_test_records() -> list:
+    """A separate 20-day record set, purpose-built for Anomaly Detection
+    testing -- kept separate from build_behavioral_state_records() because
+    that one plants an ECHO pattern, and mixing the two plants would make
+    it unclear which detector is being tested against which signal.
+
+    Layout (all m_t vectors are 5-dim here, for simplicity):
+      - Days 0-4:   stable baseline, all near [0.1, 0.1, 0.1, 0.1, 0.1]
+      - Day 5:      ACUTE anomaly -- one single wild spike, days 4 and 6
+                    are both back to normal (proves it's a single-moment
+                    event, not the start of a trend)
+      - Days 6-9:   back to baseline
+      - Days 10-13: SUSTAINED anomaly -- four consecutive days all
+                    shifted away from baseline together
+      - Days 14-15: back to baseline (proves the sustained anomaly ended)
+      - Days 16-19: STRUCTURAL anomaly -- regime_label permanently
+                    shifts from 0 to 2 and stays there (the underlying
+                    pattern changed, not just the raw m_t numbers)
+    """
+    from datetime import datetime, timedelta
+
+    records = []
+    base_date = datetime(2026, 9, 1, 12, 0, 0)
+    baseline_vector = [0.1, 0.1, 0.1, 0.1, 0.1]
+
+    for day_index in range(20):
+        timestamp = base_date + timedelta(days=day_index)
+
+        if day_index == 5:
+            m_t = [5.0, 5.0, 5.0, 5.0, 5.0]   # acute spike
+            regime_label = 0
+        elif 10 <= day_index <= 13:
+            m_t = [2.5, 2.5, 2.5, 2.5, 2.5]   # sustained shift
+            regime_label = 0
+        elif day_index >= 16:
+            m_t = [0.1, 0.1, 0.1, 0.1, 0.1]   # numbers look normal...
+            regime_label = 2                    # ...but the regime itself changed
+        else:
+            m_t = list(baseline_vector)
+            regime_label = 0
+
+        records.append(BehavioralStateRecord(
+            user_id=USER_ID,
+            timestamp=timestamp,
+            m_t=m_t,
+            p_t=RegimeState(
+                regime_label=regime_label,
+                regime_posterior=[0.9, 0.05, 0.05] if regime_label == 0 else [0.05, 0.05, 0.9],
+            ),
+        ))
+
+    return records
