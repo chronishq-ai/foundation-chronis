@@ -1,22 +1,6 @@
 import sys
 from types import ModuleType
 
-# Mock missing claims_engine package and its submodules
-claims_engine = ModuleType("claims_engine")
-claims_engine.__path__ = []
-
-claim_levels = ModuleType("claims_engine.claim_levels")
-claim_levels.Claim = object
-claim_levels.ClaimLevel = object
-
-surfacing_policy = ModuleType("claims_engine.surfacing_policy")
-surfacing_policy.SurfaceDecision = object
-surfacing_policy.SurfacingResult = object
-
-sys.modules["claims_engine"] = claims_engine
-sys.modules["claims_engine.claim_levels"] = claim_levels
-sys.modules["claims_engine.surfacing_policy"] = surfacing_policy
-
 # Initialize empty modules for chronis_ml to satisfy early imports
 chronis_ml = ModuleType("chronis_ml")
 chronis_ml_ops = ModuleType("chronis_ml.ops")
