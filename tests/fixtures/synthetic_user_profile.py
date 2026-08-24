@@ -89,9 +89,11 @@ def build_behavioral_state_records() -> list:
 
 
 def build_claims() -> list:
-    """One admissible Level 3 claim, one inadmissible Level 3 claim, plus
-    a Level 2 claim and a different user's claim -- Behavioral DNA export
-    must filter out all three of the latter, keeping only the first."""
+    """One admissible Level 3 claim, one MORE RECENT admissible Level 3
+    claim (to test 'pick the most recent' selection logic), one
+    inadmissible Level 3 claim, a Level 2 claim, and a different user's
+    claim -- Behavioral DNA export must filter out all but the two
+    admissible Level 3 claims for the requested user."""
     passing_gates = GateEvaluation(
         level=ClaimLevel.LEVEL_3,
         admissible=True,
@@ -117,6 +119,16 @@ def build_claims() -> list:
         dominant_divergence_type="aspiration",
         gate_evaluation=passing_gates,
         created_at=BASE_DATE,
+    )
+
+    more_recent_admissible_claim = Claim(
+        claim_id="claim-005",
+        user_id=USER_ID,
+        domain_id="domain-002",
+        level=ClaimLevel.LEVEL_3,
+        dominant_divergence_type="active_transition",
+        gate_evaluation=passing_gates,
+        created_at=BASE_DATE + timedelta(days=30),  # later than claim-001
     )
 
     inadmissible_claim = Claim(
@@ -149,7 +161,50 @@ def build_claims() -> list:
         created_at=BASE_DATE,
     )
 
-    return [admissible_claim, inadmissible_claim, level2_claim, different_users_claim]
+    return [
+        admissible_claim,
+        more_recent_admissible_claim,
+        inadmissible_claim,
+        level2_claim,
+        different_users_claim,
+    ]
+
+
+def build_session_excerpts() -> list:
+    """5 candidate excerpts for grounded generation testing. Exactly ONE
+    has is_near_miss=True, matching Mansi's real select_excerpts() which
+    raises a ValueError if zero near-miss excerpts are provided -- this
+    fixture must always keep that guarantee true."""
+    from upstream_interfaces import SessionExcerpt
+
+    excerpts = [
+        SessionExcerpt(
+            session_id="session-01", user_id=USER_ID, timestamp=BASE_DATE,
+            text="I finally called them back after weeks of avoiding it.",
+            contribution_score=0.91, is_near_miss=False,
+        ),
+        SessionExcerpt(
+            session_id="session-02", user_id=USER_ID, timestamp=BASE_DATE + timedelta(days=1),
+            text="Almost picked up the phone today but put it down again.",
+            contribution_score=0.62, is_near_miss=True,  # the one required near-miss
+        ),
+        SessionExcerpt(
+            session_id="session-03", user_id=USER_ID, timestamp=BASE_DATE + timedelta(days=2),
+            text="Made plans to see them next week, first time in months.",
+            contribution_score=0.85, is_near_miss=False,
+        ),
+        SessionExcerpt(
+            session_id="session-04", user_id=USER_ID, timestamp=BASE_DATE + timedelta(days=3),
+            text="Talked through what I'd say beforehand, out loud, alone.",
+            contribution_score=0.78, is_near_miss=False,
+        ),
+        SessionExcerpt(
+            session_id="session-05", user_id=USER_ID, timestamp=BASE_DATE + timedelta(days=4),
+            text="Mentioned them in conversation without changing the subject.",
+            contribution_score=0.70, is_near_miss=False,
+        ),
+    ]
+    return excerpts
 
 
 def build_domains() -> list:

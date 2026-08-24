@@ -143,3 +143,15 @@ class Claim:
     dominant_divergence_type: Optional[str]
     gate_evaluation: GateEvaluation
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class SessionExcerpt:
+    """Mirrors Mansi's SessionExcerpt (upstream_interfaces.py, Sprint 8/9).
+    A retrievable, citable unit of evidence for grounded generation."""
+    session_id: str
+    user_id: str
+    timestamp: datetime
+    text: str
+    contribution_score: float
+    is_near_miss: bool = False
