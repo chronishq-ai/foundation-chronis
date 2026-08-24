@@ -123,7 +123,8 @@ class WeatherForecastEngine:
                 f"{len(history)} are currently available."
             )
 
-        # Validate EVERY historical record before filtering.
+        # Validate EVERY historical record before filtering. Mixed-user
+        # batches are rejected rather than silently discarding evidence.
         for record in history:
             self._validate_record(record)
 
@@ -132,11 +133,13 @@ class WeatherForecastEngine:
                     "m_t dimension mismatch between current and historical record"
                 )
 
-        user_history = [
-            record
-            for record in history
-            if record.user_id == current.user_id
-        ]
+        if any(record.user_id != current.user_id for record in history):
+            raise WeatherForecastError("history contains records for another user")
+
+        user_history = list(history)
+        timestamps = [record.timestamp for record in user_history]
+        if len(timestamps) != len(set(timestamps)):
+            raise WeatherForecastError("history contains duplicate timestamps")
 
         if len(user_history) < self.min_sessions:
             return (

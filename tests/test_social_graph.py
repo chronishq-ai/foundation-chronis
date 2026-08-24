@@ -156,3 +156,18 @@ def test_rejects_empty_session_id():
                 )
             ],
         )
+def test_social_graph_uses_connected_components_and_is_order_independent():
+    graph = SocialGraph(similarity_threshold=0.8)
+    records=[fp("u","a",[1,0]),fp("u","b",[0.99,0.1]),fp("u","c",[0.8,0.6])]
+    first=graph.build("u",records)
+    second=graph.build("u",list(reversed(records)))
+    assert [n.session_ids for n in first.nodes] == [n.session_ids for n in second.nodes]
+
+def test_social_graph_rejects_duplicate_session_ids():
+    import pytest
+    with pytest.raises(SocialGraphError):
+        SocialGraph().build("u", [fp("u","same",[1,0]), fp("u","same",[1,0])])
+
+def test_social_graph_does_not_export_raw_fingerprints():
+    result=SocialGraph().build("u", [fp("u","s",[1,0])])
+    assert not hasattr(result.nodes[0], "values")

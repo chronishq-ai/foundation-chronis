@@ -54,6 +54,9 @@ def build_decision_replication_snapshot(
 ) -> DecisionReplicationSnapshot:
     """Includes every claim belonging to this user, unfiltered by level or
     admissibility. This is intentional -- see module docstring."""
+    if not user_id:
+        raise ValueError("user_id must not be empty")
+
     users_claims: List[Claim] = []
 
     for claim in claims:

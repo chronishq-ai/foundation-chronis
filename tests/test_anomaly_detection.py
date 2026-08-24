@@ -132,3 +132,16 @@ def test_anomaly_scale_enum_has_all_three_required_values():
     assert AnomalyScale.ACUTE
     assert AnomalyScale.SUSTAINED
     assert AnomalyScale.STRUCTURAL
+def test_anomaly_copy_validator_rejects_diagnostic_language():
+    import pytest
+    from anomaly_detection import validate_anomaly_copy
+    with pytest.raises(ValueError):
+        validate_anomaly_copy("This could indicate depression.")
+
+def test_anomaly_engine_rejects_non_finite_behavioral_values():
+    import pytest
+    from datetime import datetime
+    from upstream_interfaces import BehavioralStateRecord, RegimeState
+    from anomaly_detection import detect_acute_anomalies
+    records=[BehavioralStateRecord("u",datetime(2026,1,1),[float('nan')],RegimeState(0,[1.0])), BehavioralStateRecord("u",datetime(2026,1,2),[1.0],RegimeState(0,[1.0]))]
+    with pytest.raises(ValueError): detect_acute_anomalies(records)

@@ -63,3 +63,7 @@ def test_snapshot_carries_no_gating_decision_fields():
 
     overlap = field_names & forbidden_field_names
     assert overlap == set(), f"gating-style fields found where none should exist: {overlap}"
+def test_second_brain_rejects_empty_user_id():
+    import pytest
+    with pytest.raises(ValueError):
+        build_decision_replication_snapshot("", build_claims())

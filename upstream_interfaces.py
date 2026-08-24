@@ -48,17 +48,20 @@ class RegimeState:
 
 
 @dataclass(frozen=True)
+class SocialContext:
+    """Opaque, user-internal context identifiers; no names or raw PII."""
+    context_type: str
+    context_key: str
+
+
+@dataclass(frozen=True)
 class BehavioralStateRecord:
-    """One user, one timestamp: m_t (continuous) + p_t (discrete regime)."""
+    """One user, one timestamp: m_t + p_t + optional opaque social context."""
     user_id: str
     timestamp: datetime
-    m_t: Sequence[float]        # 8-15 floats, PCA-reduced behavioral vector
+    m_t: Sequence[float]
     p_t: RegimeState
-
-    # TODO (blocked on FOUNDRY): social context is not yet part of this
-    # record. Echo Detection needs it. Do not fake this field -- leave it
-    # absent until a real sample arrives, and gate Echo Detection's
-    # "context match" condition accordingly (see echo_detection.py).
+    social_context: Optional[SocialContext] = None
 
 
 # ---------------------------------------------------------------------------

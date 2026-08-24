@@ -34,6 +34,7 @@ proving the filter catches banned language.
 from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
+from math import isfinite
 from typing import List
 
 from upstream_interfaces import BehavioralStateRecord
@@ -71,6 +72,35 @@ class StructuralAnomaly:
     previous_regime_label: int
     new_regime_label: int
     scale: AnomalyScale = AnomalyScale.STRUCTURAL
+
+
+def _validate_records(records: List[BehavioralStateRecord]) -> None:
+    if not records:
+        return
+    users = {record.user_id for record in records}
+    if len(users) != 1 or not next(iter(users)):
+        raise ValueError("Anomaly Detection requires one non-empty user_id")
+    dimensions = len(records[0].m_t)
+    if dimensions == 0:
+        raise ValueError("m_t must not be empty")
+    timestamps = [record.timestamp for record in records]
+    if len(timestamps) != len(set(timestamps)):
+        raise ValueError("records contain duplicate timestamps")
+    if timestamps != sorted(timestamps):
+        raise ValueError("records must be chronologically sorted")
+    for record in records:
+        if len(record.m_t) != dimensions:
+            raise ValueError("all m_t vectors must have the same dimension")
+        for value in record.m_t:
+            if not isinstance(value, (int, float)) or not isfinite(value):
+                raise ValueError("m_t values must be finite numeric values")
+        posterior = list(record.p_t.regime_posterior)
+        if not posterior or record.p_t.regime_label < 0 or record.p_t.regime_label >= len(posterior):
+            raise ValueError("invalid regime state")
+        if any(not isinstance(v, (int,float)) or not isfinite(v) or v < 0 for v in posterior):
+            raise ValueError("regime posterior must contain finite non-negative values")
+        if abs(sum(posterior)-1.0) > 1e-6:
+            raise ValueError("regime posterior must sum to 1")
 
 
 def _euclidean_distance(vector_a, vector_b) -> float:
@@ -121,6 +151,7 @@ def detect_acute_anomalies(
     the days immediately around it. This naturally excludes sustained
     shifts -- if the neighbors also drifted, the local baseline drifts
     with them and the gap won't look as large."""
+    _validate_records(records)
     anomalies: List[AcuteAnomaly] = []
 
     for i in range(len(records)):
@@ -147,6 +178,8 @@ def detect_sustained_anomalies(
     -- because if the local window also shifted with the run, a local
     comparison would hide the very thing we're trying to find.
     """
+    _validate_records(records)
+
     anomalies: List[SustainedAnomaly] = []
 
     if len(records) == 0:
@@ -256,3 +289,12 @@ def detect_structural_anomalies(
         i += 1
 
     return anomalies
+
+def validate_anomaly_copy(text: str) -> None:
+    """Raise if user-facing anomaly copy contains diagnostic/medical terms."""
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError("anomaly copy must be non-empty text")
+    from clinical_terms import contains_clinical_terminology
+    term = contains_clinical_terminology(text)
+    if term is not None:
+        raise ValueError(f"anomaly copy contains prohibited clinical terminology: {term}")

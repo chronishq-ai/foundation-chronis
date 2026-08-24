@@ -110,3 +110,6 @@ def test_rejects_non_finite_physiology():
         SilenceMap().classify(
             sample(physiological_delta=float("nan"))
         )
+def test_zero_silence_is_rejected():
+    with pytest.raises(SilenceMapError):
+        SilenceMap().classify(sample(silence_seconds=0))

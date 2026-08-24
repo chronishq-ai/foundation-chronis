@@ -150,10 +150,12 @@ def test_weather_requires_same_weekday_and_regime():
 
     # Deliberately make every record the wrong regime.
     history = [
-        make_record(
-            day=((index % 28) + 1),
-            regime_label=0,
-            posterior=[1.0],
+        WeatherInput(
+            user_id="user_001",
+            timestamp=datetime(2026, 1, 1) + timedelta(days=index),
+            m_t=[1.0, 0.0, 0.0],
+            p_t=regime(0, [1.0]),
+            energy=0.7, social_engagement=0.7, stress=0.4, productivity=0.7,
         )
         for index in range(MIN_SESSIONS)
     ]
@@ -195,22 +197,13 @@ def test_weather_uses_cosine_similarity():
 
     assert matching_day is not None
 
-    history[0] = make_record(
-        day=matching_day,
-        m_t=[1.0, 0.0, 0.0],
-        energy=0.9,
-        social=0.9,
-        stress=0.1,
-        productivity=0.9,
+    history[0] = WeatherInput(
+        user_id="user_001", timestamp=datetime(2026, 8, matching_day, 12), m_t=[1.0,0.0,0.0],
+        p_t=regime(0,[1.0]), energy=0.9, social_engagement=0.9, stress=0.1, productivity=0.9
     )
-
-    history[1] = make_record(
-        day=matching_day,
-        m_t=[0.0, 1.0, 0.0],
-        energy=0.1,
-        social=0.1,
-        stress=0.9,
-        productivity=0.1,
+    history[1] = WeatherInput(
+        user_id="user_001", timestamp=datetime(2026, 8, matching_day, 13), m_t=[0.0,1.0,0.0],
+        p_t=regime(0,[1.0]), energy=0.1, social_engagement=0.1, stress=0.9, productivity=0.1
     )
 
     result = engine.forecast(
@@ -412,13 +405,13 @@ def test_weather_does_not_mix_users():
         for index in range(MIN_SESSIONS)
     ]
 
-    result = engine.forecast(
-        current=current,
-        history=history,
-    )
+    with pytest.raises(WeatherForecastError):
+        engine.forecast(
+            current=current,
+            history=history,
+        )
 
-    assert isinstance(result, str)
-    assert "user" in result.lower()
+    assert True
 
 def test_weather_accepts_optional_v2_evidence():
     engine = WeatherForecastEngine()
@@ -566,3 +559,23 @@ def test_weather_transition_warning_is_exact_required_copy():
         "Currently in behavioral transition. Forecast reliability "
         "reduced. Patterns from prior phase may not apply."
     )
+def test_weather_rejects_mixed_user_history():
+    engine = WeatherForecastEngine()
+    current = make_record(day=24)
+    history = make_history(MIN_SESSIONS)
+    history[-1] = make_record(user_id="other", day=23)
+    with pytest.raises(WeatherForecastError):
+        engine.forecast(current=current, history=history)
+
+def test_weather_flags_high_and_low_focus_analogues():
+    engine = WeatherForecastEngine(similarity_candidates=1)
+    current = make_record(day=24, m_t=[1.0,0.0,0.0])
+    history = make_history(MIN_SESSIONS)
+    tomorrow = current.timestamp + timedelta(days=1)
+    matching = next(day for day in range(1,29) if make_record(day=day).timestamp.weekday() == tomorrow.weekday())
+    history[0] = make_record(day=matching, productivity=0.9)
+    result = engine.forecast(current=current, history=history)
+    assert result.historical_focus_flag == "historically high-focus"
+    history[0] = make_record(day=matching, productivity=0.1)
+    result = engine.forecast(current=current, history=history)
+    assert result.historical_focus_flag == "historically difficult"

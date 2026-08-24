@@ -111,3 +111,29 @@ def test_single_record_returns_empty_list():
     records = build_behavioral_state_records()
     echoes = find_echoes([records[0]])
     assert echoes == []
+def test_echo_requires_social_context_and_classifies_three_types():
+    from datetime import datetime
+    from upstream_interfaces import BehavioralStateRecord, RegimeState, SocialContext
+    base = [1.0, 2.0, 3.0]
+    records = []
+    for i, kind in enumerate(["conversation", "conversation", "behavioral-loop", "behavioral-loop", "situational", "situational"]):
+        records.append(BehavioralStateRecord("u", datetime(2026,1,1+i), base, RegimeState(0,[1.0]), SocialContext(kind, f"key:{kind}")))
+    echoes = find_echoes(records)
+    assert {e.echo_type for e in echoes} == {"conversation", "behavioral-loop", "situational"}
+
+def test_echo_rejects_missing_or_mismatched_context():
+    from datetime import datetime
+    from upstream_interfaces import BehavioralStateRecord, RegimeState, SocialContext
+    a = BehavioralStateRecord("u", datetime(2026,1,1), [1,2,3], RegimeState(0,[1.0]), None)
+    b = BehavioralStateRecord("u", datetime(2026,1,2), [1,2,3], RegimeState(0,[1.0]), SocialContext("conversation","k"))
+    assert find_echoes([a,b]) == []
+    c = BehavioralStateRecord("u", datetime(2026,1,3), [1,2,3], RegimeState(0,[1.0]), SocialContext("situational","k"))
+    assert find_echoes([b,c]) == []
+
+def test_echo_rejects_mixed_users():
+    from datetime import datetime
+    from upstream_interfaces import BehavioralStateRecord, RegimeState, SocialContext
+    a=BehavioralStateRecord("u1",datetime(2026,1,1),[1,2],RegimeState(0,[1.0]),SocialContext("conversation","k"))
+    b=BehavioralStateRecord("u2",datetime(2026,1,2),[1,2],RegimeState(0,[1.0]),SocialContext("conversation","k"))
+    import pytest
+    with pytest.raises(ValueError): find_echoes([a,b])

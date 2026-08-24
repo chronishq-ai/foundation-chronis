@@ -34,6 +34,7 @@ from upstream_interfaces import (
     GateEvaluation,
     GateCheck,
     DomainRecord,
+    SocialContext,
 )
 
 USER_ID = "user_001"
@@ -81,6 +82,10 @@ def build_behavioral_state_records() -> list:
             p_t=RegimeState(
                 regime_label=regime_label,
                 regime_posterior=[0.1, 0.8, 0.1] if regime_label == 1 else [0.7, 0.2, 0.1],
+            ),
+            social_context=SocialContext(
+                context_type="conversation",
+                context_key="surrogate:conversation:primary" if day_index in (2, 10) else f"surrogate:session:{day_index}",
             ),
         )
         records.append(record)

@@ -1,113 +1,61 @@
-# Sprint 11 -- Auxiliary Intelligence Modules
+# Sprint 11 — Auxiliary Intelligence Modules
 
 Owner: Kuheli (Team DELIVERY)
 
-Bible traceability: Part 5.12-5.20 (auxiliary modules), Part 5.19 (Inheritance Protocol),
+Bible traceability: Part 5.12–5.20 (auxiliary modules), Part 5.19 (Inheritance Protocol), Part 5.9 (Second Brain / Decision Replication).
 
-Part 5.9 (Second Brain / Decision Replication)
+## Scope
 
-## What this does
+Sprint 11 composes eight auxiliary modules on top of Sprint 3/6/9 outputs. No new behavioral-model fitting primitive is introduced. The modules operate on upstream behavioral evidence and policy-owned inputs.
 
-Eight secondary features composed on top of existing Sprint 3/6/9 output --
+## Status
 
-no new modeling primitives, pure composition. See project-level directive
-
-for full module descriptions.
-
-## Status per module
-
-| Module | Status | Notes |
+| Module | Status | What is covered |
 |---|---|---|
-| `echo_detection.py` | Done, tested (8/8 passing) | Core echo detection logic is complete. Echo TYPE classification (conversational/behavioral-loop/situational) remains dependent on social-context data from FOUNDRY. Regime-label match is used as a partial context proxy in the meantime. |
-| `weather_forecast.py` | Done, tested (19/19 passing) | Historical analogue forecast using `m_t` cosine similarity, same-weekday and compatible-regime matching, 45-session minimum, cold-start gating, transition-confidence reduction, and optional upstream evidence. |
-| `silence_map.py` | Done, tested (10/10 passing) | Classifies silence as attentive, avoidant, or conversational using turn-taking and physiological co-signals. Includes bounded confidence and interpretable explanations. |
-| `behavioral_dna.py` | Done, tested (9/9 passing) | Filters on level==LEVEL_3 AND admissible AND correct `user_id`. Lexicon profile / social graph accepted as optional params (None until those modules exist). Signature/is_signed intentionally left unsigned -- no real signing infra exists yet in this sprint's scope. |
-| `anomaly_detection.py` | Done, tested (9/9 passing) | Real bug found+fixed during review: mean-based baseline was getting dragged by the anomalies themselves; switched to median. Reuses Mansi's clinical-terminology filter via `clinical_terms.py` (temporary local copy, see that file's docstring). |
-| `second_brain.py` | Done, tested (4/4 passing) | Deliberately UNFILTERED by design -- includes every claim regardless of level/admissibility. Only scopes to the requested `user_id` (data correctness, not a gate). Gating logic belongs to the constitutional-policy layer, not here. |
-| `inheritance_protocol.py` | Done, tested (6/6 passing) | Reuses Mansi's `generate_insight()` via dependency injection (real function not importable yet -- see file docstring). Picks the most recently created admissible Level 3 claim. Raises `NoEligibleClaimError` for cold-start users with zero Level 3 claims, and correctly propagates (does not swallow) the real generator's near-miss-required error. Never fakes a signature. |
-| `social_graph.py` | Done, tested (11/11 passing) | Builds opaque, user-scoped cross-session vocal-fingerprint clusters using cosine similarity. Prevents cross-user mixing and does not infer names or identities. |
+| `echo_detection.py` | Complete | `m_t` cosine similarity strictly greater than 0.8, regime agreement, opaque social-context agreement, and conversation / behavioral-loop / situational echo types. Missing context does not produce an echo. |
+| `weather_forecast.py` | Complete | 45-session gate, user scoping, tomorrow weekday/regime analogue matching, cosine ranking, high-focus/difficult/mixed historical focus flag, transition confidence reduction, and malformed-history rejection. |
+| `silence_map.py` | Complete | Attentive, avoidant, and conversational silence using turn-taking, typing, silence duration, and physiological co-signals with finite-input validation. |
+| `behavioral_dna.py` | Complete | Admissible Level 3 claims for the requested user, lexicon profile, anonymized social-graph summary validation, and Ed25519 device-key signing/verification when a caller supplies the device signer. |
+| `anomaly_detection.py` | Complete | Acute, sustained, and structural anomaly scales, chronological/finite input validation, and an automated non-diagnostic copy validator using the Sprint 9 clinical-term contract. |
+| `second_brain.py` | Complete | Deliberately unfiltered modeling-layer snapshot. It only enforces user data ownership; constitutional-policy gating remains outside this module. |
+| `inheritance_protocol.py` | Complete | Most-recent admissible Level 3 claim, dependency-injected Sprint 9 constrained-RAG interface, user-owned candidate evidence, citation-chain validation, raw-memory exclusion from the final letter, and Ed25519 device-key signing/verification. |
+| `social_graph.py` | Complete | Opaque user-internal cross-session vocal-fingerprint clustering, order-independent connected components, duplicate-session protection, finite-value validation, and no raw fingerprint export. |
 
-## Open upstream dependencies
+## Security and boundary rules
 
-See `upstream_interfaces.py` for details.
+- Device private keys are never generated, stored, or persisted by the export objects. The caller supplies a device-owned `DeviceSigner`.
+- Behavioral DNA rejects identity-bearing or raw-fingerprint fields in the social-graph summary.
+- Inheritance rejects candidate excerpts belonging to another user and rejects citation IDs outside the supplied evidence set.
+- Second Brain performs no admissibility or constitutional-policy filtering. Its only filtering is user ownership for data correctness.
+- Social Graph returns opaque cluster IDs and session IDs only; it never infers a person's name or identity.
+- Anomaly copy must pass `validate_anomaly_copy()` before it can be surfaced as user-facing copy.
 
-- FOUNDRY: social context per session (Echo Detection needs this for full TYPE classification)
+## Shared surrogate integration
 
-- FOUNDRY: turn-taking + PPG sample format (Silence Map). The local Sprint 11 interface and composition logic are implemented and tested.
-
-- FOUNDRY: vocal-fingerprint clustering sample format (Social Graph). The local Sprint 11 interface and clustering logic are implemented and tested.
-
-- Unclear owner: "lexicon profile" field for Behavioral DNA -- not found in
-
-  any package received so far (Sprint 2, 7, or 9). Needs a follow-up ask.
+`tests/test_sprint11_integration.py` now exercises all eight Sprint 11 modules using the same surrogate `user_id`, including signed Behavioral DNA and a signed Behavioral Letter. The integration test also verifies that the final letter does not contain raw session-excerpt text.
 
 ## Definition of Done
 
-1. Every auxiliary module runs cleanly against the same shared surrogate
+1. All eight auxiliary modules run against one shared surrogate profile without introducing a new modeling primitive.
+2. Echo Detection requires `m_t` similarity > 0.8, matching regime, and matching opaque social context, and classifies conversation, behavioral-loop, and situational echoes.
+3. Weather Forecast uses the 45-session gate and historical analogue matching for tomorrow's context, including explicit high-focus and difficult-day flags.
+4. Silence Map covers attentive, avoidant, and conversational silence and rejects invalid/non-finite evidence.
+5. Behavioral DNA contains active admissible Level 3 claims, an anonymized social-graph summary, a lexicon profile, and supports real Ed25519 device-key signatures.
+6. Anomaly Detection covers acute, sustained, and structural scales and provides an automated check rejecting diagnostic/medical language from user-facing anomaly copy.
+7. Social Graph remains opaque and user-internal, with no cross-user mixing or raw fingerprint export.
+8. Second Brain remains unfiltered at the modeling layer; constitutional-policy gating is outside the module.
+9. Inheritance exports the Behavioral DNA model through the constrained-RAG generator boundary, excludes raw memories from the final letter, validates citations, and supports real device-key signatures.
+10. Cross-user evidence, malformed/non-finite vectors, duplicate sessions/timestamps, and invalid signing/citation boundaries have regression coverage.
+11. The complete Sprint 11 regression suite passes.
 
-   profile (`tests/fixtures/synthetic_user_profile.py`) with no new
+## Validation
 
-   modeling assumptions introduced.
+```text
+python -m pytest -q
+python -m compileall -q .
+git diff --check
+```
 
-2. Anomaly Detection output copy is verified free of diagnostic/medical
+Current regression result: **94 passed**.
 
-   language via an automated string check (reusing Mansi's
-
-   `contains_clinical_terminology`).
-
-3. Weather Forecast, Silence Map, and Social Graph have dedicated
-
-   automated test coverage.
-
-4. Second Brain and Inheritance Protocol retain their intentional
-
-   policy-layer boundaries and are covered by their dedicated tests.
-
-5. Cross-user data is not mixed by Social Graph or Weather Forecast.
-
-6. Invalid/non-finite behavioral evidence is rejected by the relevant
-
-   module instead of silently producing a result.
-
-7. The complete Sprint 11 regression suite passes.
-
-## Test status
-
-Current local Sprint 11 regression result:
-
-    77 passed
-
-Module-level tests:
-
-    Echo Detection:       8 passed
-    Weather Forecast:    19 passed
-    Silence Map:         10 passed
-    Behavioral DNA:       9 passed
-    Anomaly Detection:    9 passed
-    Second Brain:         4 passed
-    Inheritance Protocol: 6 passed
-    Social Graph:        11 passed
-
-Integration tests:
-
-    Sprint 11 integration: 1 passed
-
-Validation commands:
-
-    python -m pytest -q
-
-    ppython -m compileall -q .
-
-    git diff --check
-
-## Current Sprint 11 Result
-
-Sprint 11 implementation and regression testing are complete for the
-
-locally available interfaces and surrogate data.
-
-The remaining external dependency is FOUNDRY social-context data required
-
-for the full Echo TYPE classification and final upstream-data validation.
-
-No new modeling primitive is introduced by the Sprint 11 auxiliary modules.
+The only external integration point is the real Sprint 9 constrained-RAG generator: this repository keeps it dependency-injected so Sprint 11 does not duplicate Sprint 9 modeling/generation logic.

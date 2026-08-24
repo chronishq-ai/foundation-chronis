@@ -114,9 +114,9 @@ class SilenceMap:
                 "silence_seconds must be finite"
             )
 
-        if sample.silence_seconds < 0:
+        if sample.silence_seconds <= 0:
             raise SilenceMapError(
-                "silence_seconds cannot be negative"
+                "silence_seconds must be greater than zero"
             )
 
         if not isinstance(sample.turn_expected, bool):

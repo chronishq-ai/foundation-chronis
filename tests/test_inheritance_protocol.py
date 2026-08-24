@@ -173,3 +173,19 @@ def test_propagates_the_generators_own_error_instead_of_swallowing_it():
         assert False, "expected the generator's ValueError to propagate, nothing was raised"
     except ValueError as e:
         assert "near-miss" in str(e)
+def test_inheritance_can_be_signed_and_verified_with_device_key():
+    from signing import DeviceSigner
+    signer = DeviceSigner.generate()
+    export = build_behavioral_dna_export(USER_ID, build_claims())
+    letter = build_inheritance_letter(export, None, build_session_excerpts(), fake_insight_generator, None, signer)
+    assert letter.is_signed and letter.signature
+    assert letter.verify_signature(signer)
+
+def test_inheritance_rejects_cross_user_evidence():
+    import pytest
+    from signing import DeviceSigner
+    from upstream_interfaces import SessionExcerpt
+    export = build_behavioral_dna_export(USER_ID, build_claims())
+    excerpts = build_session_excerpts() + [SessionExcerpt("bad", "other", build_session_excerpts()[0].timestamp, "other", 0.1)]
+    with pytest.raises(ValueError):
+        build_inheritance_letter(export, None, excerpts, fake_insight_generator, None, DeviceSigner.generate())
