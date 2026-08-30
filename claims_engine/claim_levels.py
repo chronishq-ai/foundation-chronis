@@ -8,6 +8,16 @@ its five conditions, NOTHING surfaces — not a softened version, nothing.
 This is implemented as `evaluate_level3_gates` returning either a fully-passed
 gate result or a definitive rejection; there is no partial/soft path anywhere
 in this module.
+
+S79.3 FIX: `evaluate_level2`'s `shared_latent_driver` check previously
+approved on `power_gate_passed AND dominant_type is not None` alone — it never
+looked at whether the Granger test actually found significance. That let a
+regime with a passed power gate but a NULL Granger result (p-value/ROPE mass
+above the Bonferroni-corrected alpha) through as a "shared latent driver."
+Fixed below: `shared_latent_driver` now strictly requires the power gate AND
+actual statistical significance in at least one Granger direction, read
+defensively (missing/None fields, or the test never having run, evaluate to
+False — never to True).
 """
 
 from __future__ import annotations
@@ -108,10 +118,55 @@ def evaluate_level1(attractor: AttractorRecord) -> GateEvaluation:
 
 # ---------------------------------------------------------------------------
 # Level 2 — disposition. Convergent Level-1 patterns + shared latent driver
-# (Sprint 8's co-occupancy+Granger test, power-gated) + domain confidence.
+# (Sprint 8's co-occupancy+Granger test, power-gated AND statistically
+# significant) + domain confidence.
 # ---------------------------------------------------------------------------
 
 DOMAIN_CONFIDENCE_FLOOR = 0.5  # person-calibrated in production; explicit provisional constant here.
+
+
+def _granger_found_significance(provenance) -> bool:
+    """
+    Defensive, attribute-shape-agnostic check for whether the Granger /
+    MS-VAR provenance object actually found directional significance in
+    EITHER direction (m->n or n->m).
+
+    Prefers the precomputed boolean flags (`significant_m_causes_n`,
+    `significant_n_causes_m`) when present, since those already encode
+    whatever exact comparison (p-value/ROPE-mass < bonferroni_alpha) the
+    Granger module used. Falls back to recomputing from the raw p-value/
+    ROPE-mass fields against `bonferroni_alpha` if the flags aren't there.
+
+    Any of the following make this return False, never True:
+      - `provenance` is None
+      - the test never ran (`ran` is False, or absent and no usable fields)
+      - required numeric fields are None or missing
+    """
+    if provenance is None:
+        return False
+
+    ran = getattr(provenance, "ran", True)  # if the object has no `ran`, don't block on it
+    if ran is False:
+        return False
+
+    # Preferred path: precomputed significance booleans.
+    sig_m_to_n = getattr(provenance, "significant_m_causes_n", None)
+    sig_n_to_m = getattr(provenance, "significant_n_causes_m", None)
+    if isinstance(sig_m_to_n, bool) or isinstance(sig_n_to_m, bool):
+        return bool(sig_m_to_n) or bool(sig_n_to_m)
+
+    # Fallback path: recompute from raw p-value/ROPE-mass vs. bonferroni_alpha.
+    alpha = getattr(provenance, "bonferroni_alpha", None)
+    if alpha is None:
+        return False
+
+    p_m_to_n = getattr(provenance, "p_value_m_causes_n", None)
+    p_n_to_m = getattr(provenance, "p_value_n_causes_m", None)
+
+    def _below(p):
+        return p is not None and p < alpha
+
+    return _below(p_m_to_n) or _below(p_n_to_m)
 
 
 def evaluate_level2(
@@ -121,14 +176,27 @@ def evaluate_level2(
 ) -> GateEvaluation:
     convergent_level1 = all(e.admissible for e in level1_evaluations) and len(level1_evaluations) >= 1
     power_gate_passed = divergence_state.provenance.power_gate_passed
-    shared_latent_driver = power_gate_passed and (divergence_state.type_scores.dominant() is not None)
+    granger_significant = _granger_found_significance(divergence_state.provenance)
+    shared_latent_driver = (
+        power_gate_passed
+        and granger_significant
+        and (divergence_state.type_scores.dominant() is not None)
+    )
     domain_confidence_ok = domain.confidence >= DOMAIN_CONFIDENCE_FLOOR
 
     checks = [
         GateCheck("convergent_level1_patterns", convergent_level1),
         GateCheck("power_gate_passed_mp09", power_gate_passed,
                   "MP-09: below 20 sessions/regime, Granger never ran -> no Level 2, no exceptions."),
-        GateCheck("shared_latent_driver_detected", shared_latent_driver),
+        GateCheck(
+            "shared_latent_driver_detected",
+            shared_latent_driver,
+            "Requires power_gate_passed AND actual Granger significance "
+            "(p-value/ROPE mass < bonferroni_alpha in at least one direction) "
+            "AND a dominant divergence type — a passed power gate alone is not "
+            "evidence of a shared latent driver; missing/None Granger results "
+            "or a test that never ran evaluate to False, not True.",
+        ),
         GateCheck("domain_confidence_floor", domain_confidence_ok, f">= {DOMAIN_CONFIDENCE_FLOOR}"),
     ]
     admissible = all(c.passed for c in checks)
