@@ -179,7 +179,7 @@ def test_inheritance_can_be_signed_and_verified_with_device_key():
     export = build_behavioral_dna_export(USER_ID, build_claims())
     letter = build_inheritance_letter(export, None, build_session_excerpts(), fake_insight_generator, None, signer)
     assert letter.is_signed and letter.signature
-    assert letter.verify_signature(signer)
+    assert letter.verify_signature(signer.public_key_bytes())
 
 def test_inheritance_rejects_cross_user_evidence():
     import pytest
@@ -189,3 +189,64 @@ def test_inheritance_rejects_cross_user_evidence():
     excerpts = build_session_excerpts() + [SessionExcerpt("bad", "other", build_session_excerpts()[0].timestamp, "other", 0.1)]
     with pytest.raises(ValueError):
         build_inheritance_letter(export, None, excerpts, fake_insight_generator, None, DeviceSigner.generate())
+
+def test_inheritance_verifies_with_public_key_only():
+    from signing import DeviceSigner
+    signer = DeviceSigner.generate()
+    export = build_behavioral_dna_export(USER_ID, build_claims())
+    letter = build_inheritance_letter(export, None, build_session_excerpts(), fake_insight_generator, None, signer)
+    public_key = signer.public_key_bytes()
+    del signer
+    assert letter.verify_signature(public_key)
+
+
+def test_inheritance_rejects_wrong_public_key():
+    from signing import DeviceSigner
+    signer = DeviceSigner.generate()
+    wrong = DeviceSigner.generate()
+    export = build_behavioral_dna_export(USER_ID, build_claims())
+    letter = build_inheritance_letter(export, None, build_session_excerpts(), fake_insight_generator, None, signer)
+    assert not letter.verify_signature(wrong.public_key_bytes())
+
+
+def test_inheritance_rejects_six_word_raw_fragment():
+    import pytest
+    from signing import DeviceSigner
+    from upstream_interfaces import SessionExcerpt
+    export = build_behavioral_dna_export(USER_ID, build_claims())
+    excerpts = [
+        SessionExcerpt(
+            "session-01", USER_ID, build_session_excerpts()[0].timestamp,
+            "alpha beta gamma delta epsilon zeta eta theta", 0.9,
+        )
+    ]
+
+    def leaking_generator(claim, divergence_state, candidate_excerpts, llm_client):
+        return FakeGeneratedInsight(
+            "A different opening. alpha beta gamma delta epsilon zeta continues here.",
+            ["session-01"],
+        )
+
+    with pytest.raises(ValueError):
+        build_inheritance_letter(export, None, excerpts, leaking_generator, None, DeviceSigner.generate())
+
+
+def test_inheritance_allows_no_six_word_raw_fragment():
+    from signing import DeviceSigner
+    from upstream_interfaces import SessionExcerpt
+    export = build_behavioral_dna_export(USER_ID, build_claims())
+    excerpts = [
+        SessionExcerpt(
+            "session-01", USER_ID, build_session_excerpts()[0].timestamp,
+            "alpha beta gamma delta epsilon zeta eta theta", 0.9,
+        )
+    ]
+
+    def safe_generator(claim, divergence_state, candidate_excerpts, llm_client):
+        return FakeGeneratedInsight(
+            "A different opening uses only five shared words alpha beta gamma delta epsilon.",
+            ["session-01"],
+        )
+
+    letter = build_inheritance_letter(export, None, excerpts, safe_generator, None, DeviceSigner.generate())
+    assert letter.letter_text

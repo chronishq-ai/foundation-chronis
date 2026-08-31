@@ -50,12 +50,12 @@ def test_sprint11_shared_surrogate_profile_all_eight_modules():
     signer = DeviceSigner.generate()
     lexicon = {"recurring_words": ["overwhelmed", "trying"], "style": "concise"}
     export = build_behavioral_dna_export(user_id, claims, lexicon, {"cluster_count": len(social.nodes)}, signer)
-    assert export.is_signed and export.verify_signature(signer)
+    assert export.is_signed and export.verify_signature(signer.public_key_bytes())
 
     snapshot = build_decision_replication_snapshot(user_id, claims)
     assert {c.claim_id for c in snapshot.all_claims} >= {"claim-002", "claim-003"}
 
     excerpts = build_session_excerpts()
     letter = build_inheritance_letter(export, None, excerpts, generator, None, signer)
-    assert letter.is_signed and letter.verify_signature(signer)
+    assert letter.is_signed and letter.verify_signature(signer.public_key_bytes())
     assert not any(ex.text in letter.letter_text for ex in excerpts)

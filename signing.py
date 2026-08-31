@@ -64,6 +64,7 @@ class DeviceSigner:
         )
 
     def verify(self, payload: Any, signature: str) -> bool:
+        """Internal convenience for the original signer; public callers should use verify_signature()."""
         try:
             self._private_key.public_key().verify(base64.b64decode(signature), canonical_json(payload))
             return True

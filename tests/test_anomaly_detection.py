@@ -145,3 +145,9 @@ def test_anomaly_engine_rejects_non_finite_behavioral_values():
     from anomaly_detection import detect_acute_anomalies
     records=[BehavioralStateRecord("u",datetime(2026,1,1),[float('nan')],RegimeState(0,[1.0])), BehavioralStateRecord("u",datetime(2026,1,2),[1.0],RegimeState(0,[1.0]))]
     with pytest.raises(ValueError): detect_acute_anomalies(records)
+
+def test_clinical_safety_function_is_single_sprint11_source():
+    import anomaly_detection
+    import clinical_terms
+    assert anomaly_detection.validate_anomaly_copy.__module__ == "anomaly_detection"
+    assert clinical_terms.contains_clinical_terminology("anxiety") == "anxiety"

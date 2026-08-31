@@ -579,3 +579,16 @@ def test_weather_flags_high_and_low_focus_analogues():
     history[0] = make_record(day=matching, productivity=0.1)
     result = engine.forecast(current=current, history=history)
     assert result.historical_focus_flag == "historically difficult"
+
+
+def test_weather_cosine_similarity_matches_hand_computed_value():
+    similarity = WeatherForecastEngine._cosine_similarity(
+        [1.0, 1.0],
+        [1.0, 0.0],
+    )
+    assert similarity == pytest.approx(1.0 / (2.0 ** 0.5))
+
+
+def test_weather_confidence_matches_hand_computed_similarity_average():
+    confidence = WeatherForecastEngine._confidence_from_similarity([1.0, 0.0, -1.0])
+    assert confidence == pytest.approx((1.0 + 0.5 + 0.0) / 3.0)

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Any
 from upstream_interfaces import Claim, ClaimLevel
-from signing import DeviceSigner
+from signing import DeviceSigner, verify_signature
 
 
 def _utc_now() -> datetime:
@@ -47,8 +47,13 @@ class BehavioralDNAExport:
             "generated_at": self.generated_at,
         }
 
-    def verify_signature(self, signer: DeviceSigner) -> bool:
-        return bool(self.signature and self.is_signed and signer.verify(self.signing_payload(), self.signature))
+    def verify_signature(self, public_key_bytes: bytes) -> bool:
+        """Verify using only the exported public key; private keys are not required."""
+        return bool(
+            self.signature
+            and self.is_signed
+            and verify_signature(self.signing_payload(), self.signature, public_key_bytes)
+        )
 
 
 def build_behavioral_dna_export(

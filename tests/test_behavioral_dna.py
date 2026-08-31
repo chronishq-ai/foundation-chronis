@@ -110,16 +110,32 @@ def test_behavioral_dna_can_be_cryptographically_signed_and_verified():
     export = build_behavioral_dna_export(USER_ID, build_claims(), {"recurring_words": ["trying"]}, {"cluster_count": 1}, signer)
     assert export.is_signed is True
     assert export.signature
-    assert export.verify_signature(signer)
+    assert export.verify_signature(signer.public_key_bytes())
 
 def test_behavioral_dna_signature_detects_tampering():
     from signing import DeviceSigner
     signer = DeviceSigner.generate()
     export = build_behavioral_dna_export(USER_ID, build_claims(), {"recurring_words": ["trying"]}, {"cluster_count": 1}, signer)
     tampered = type(export)(export.user_id, export.level3_claims, {"recurring_words": ["changed"]}, export.social_graph_summary, export.signature, export.is_signed, export.generated_at)
-    assert not tampered.verify_signature(signer)
+    assert not tampered.verify_signature(signer.public_key_bytes())
 
 def test_social_graph_summary_rejects_identity_or_raw_fingerprint_fields():
     import pytest
     with pytest.raises(ValueError):
         build_behavioral_dna_export(USER_ID, build_claims(), social_graph_summary={"name": "Alice"})
+
+def test_behavioral_dna_verifies_with_public_key_only():
+    from signing import DeviceSigner
+    signer = DeviceSigner.generate()
+    export = build_behavioral_dna_export(USER_ID, build_claims(), device_signer=signer)
+    public_key = signer.public_key_bytes()
+    del signer
+    assert export.verify_signature(public_key)
+
+
+def test_behavioral_dna_rejects_wrong_public_key():
+    from signing import DeviceSigner
+    signer = DeviceSigner.generate()
+    wrong = DeviceSigner.generate()
+    export = build_behavioral_dna_export(USER_ID, build_claims(), device_signer=signer)
+    assert not export.verify_signature(wrong.public_key_bytes())

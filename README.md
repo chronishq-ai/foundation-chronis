@@ -18,12 +18,12 @@ Sprint 11 composes eight auxiliary modules on top of Sprint 3/6/9 outputs. No ne
 | `behavioral_dna.py` | Complete | Admissible Level 3 claims for the requested user, lexicon profile, anonymized social-graph summary validation, and Ed25519 device-key signing/verification when a caller supplies the device signer. |
 | `anomaly_detection.py` | Complete | Acute, sustained, and structural anomaly scales, chronological/finite input validation, and an automated non-diagnostic copy validator using the Sprint 9 clinical-term contract. |
 | `second_brain.py` | Complete | Deliberately unfiltered modeling-layer snapshot. It only enforces user data ownership; constitutional-policy gating remains outside this module. |
-| `inheritance_protocol.py` | Complete | Most-recent admissible Level 3 claim, dependency-injected Sprint 9 constrained-RAG interface, user-owned candidate evidence, citation-chain validation, raw-memory exclusion from the final letter, and Ed25519 device-key signing/verification. |
+| `inheritance_protocol.py` | Complete | Most-recent admissible Level 3 claim, dependency-injected Sprint 9 constrained-RAG interface, user-owned candidate evidence, citation-chain validation, raw-memory exclusion from the final letter, and Ed25519 device-key signing plus public-key-only verification. |
 | `social_graph.py` | Complete | Opaque user-internal cross-session vocal-fingerprint clustering, order-independent connected components, duplicate-session protection, finite-value validation, and no raw fingerprint export. |
 
 ## Security and boundary rules
 
-- Device private keys are never generated, stored, or persisted by the export objects. The caller supplies a device-owned `DeviceSigner`.
+- Device private keys are never generated, stored, or persisted by the export objects. The caller supplies a device-owned `DeviceSigner`; public verification uses only exported public-key bytes.
 - Behavioral DNA rejects identity-bearing or raw-fingerprint fields in the social-graph summary.
 - Inheritance rejects candidate excerpts belonging to another user and rejects citation IDs outside the supplied evidence set.
 - Second Brain performs no admissibility or constitutional-policy filtering. Its only filtering is user ownership for data correctness.
@@ -40,11 +40,11 @@ Sprint 11 composes eight auxiliary modules on top of Sprint 3/6/9 outputs. No ne
 2. Echo Detection requires `m_t` similarity > 0.8, matching regime, and matching opaque social context, and classifies conversation, behavioral-loop, and situational echoes.
 3. Weather Forecast uses the 45-session gate and historical analogue matching for tomorrow's context, including explicit high-focus and difficult-day flags.
 4. Silence Map covers attentive, avoidant, and conversational silence and rejects invalid/non-finite evidence.
-5. Behavioral DNA contains active admissible Level 3 claims, an anonymized social-graph summary, a lexicon profile, and supports real Ed25519 device-key signatures.
+5. Behavioral DNA contains active admissible Level 3 claims, an anonymized social-graph summary, a lexicon profile, and supports real Ed25519 device-key signatures with public-key-only verification.
 6. Anomaly Detection covers acute, sustained, and structural scales and provides an automated check rejecting diagnostic/medical language from user-facing anomaly copy.
 7. Social Graph remains opaque and user-internal, with no cross-user mixing or raw fingerprint export.
 8. Second Brain remains unfiltered at the modeling layer; constitutional-policy gating is outside the module.
-9. Inheritance exports the Behavioral DNA model through the constrained-RAG generator boundary, excludes raw memories from the final letter, validates citations, and supports real device-key signatures.
+9. Inheritance exports the Behavioral DNA model through the constrained-RAG generator boundary, excludes raw memories from the final letter, validates citations, and supports real device-key signatures with public-key-only verification.
 10. Cross-user evidence, malformed/non-finite vectors, duplicate sessions/timestamps, and invalid signing/citation boundaries have regression coverage.
 11. The complete Sprint 11 regression suite passes.
 
@@ -56,6 +56,24 @@ python -m compileall -q .
 git diff --check
 ```
 
-Current regression result: **94 passed**.
+Current regression result: **101 passed**.
 
-The only external integration point is the real Sprint 9 constrained-RAG generator: this repository keeps it dependency-injected so Sprint 11 does not duplicate Sprint 9 modeling/generation logic.
+The real Sprint 9 constrained-RAG generator remains dependency-injected so Sprint 11 does not duplicate Sprint 9 modeling/generation logic. The Phase-2 cross-sprint canonical safety-package/monorepo work is intentionally not fabricated inside this isolated Sprint 11 branch; `clinical_terms.py` remains the documented compatibility boundary until the canonical package graph is available.
+
+## Phase-2 hardening review
+
+The Sprint 11 code was reviewed against the Phase-2 closure findings without replacing the original module architecture.
+
+- `XCUT-3`: fixed. Behavioral DNA and Inheritance Protocol now expose public-key-only verification; private-key verification remains only as an internal signer convenience.
+- `XCUT-4`: fixed. Inheritance Protocol now rejects any verbatim run of 6 or more consecutive words from candidate session excerpts, with positive and negative regression cases.
+- Weather numerical follow-up: completed. The 45-session gate, historical weekday/regime matching, cosine ranking, confidence reduction, focus flags, malformed evidence, and hand-computed cosine/confidence checks are covered by regression tests.
+- `XCUT-2`: not falsely marked closed in this isolated branch. The Phase-2 requirement is cross-sprint and requires one canonical package graph shared by Sprint 9, Sprint 11, and Sprint 12. The existing `clinical_terms.py` compatibility boundary is retained rather than introducing a second local safety implementation or fabricating a monorepo inside Sprint 11.
+- `XCUT-5`: not modified here because the finding belongs to the Sprint 1 foundation branch and changing that branch from Sprint 11 would violate the sprint ownership boundary.
+
+## Hardening regression result
+
+    python -m compileall -q .
+    python -m pytest -q
+    git diff --check
+
+Result: **103 passed**.

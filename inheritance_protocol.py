@@ -3,9 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Callable, List, Optional
+import re
 from behavioral_dna import BehavioralDNAExport
 from upstream_interfaces import Claim, SessionExcerpt
-from signing import DeviceSigner
+from signing import DeviceSigner, verify_signature
 
 class NoEligibleClaimError(Exception):
     pass
@@ -33,8 +34,13 @@ class BehavioralLetter:
             "generated_at": self.generated_at,
         }
 
-    def verify_signature(self, signer: DeviceSigner) -> bool:
-        return bool(self.signature and self.is_signed and signer.verify(self.signing_payload(), self.signature))
+    def verify_signature(self, public_key_bytes: bytes) -> bool:
+        """Verify using only the exported public key; private keys are not required."""
+        return bool(
+            self.signature
+            and self.is_signed
+            and verify_signature(self.signing_payload(), self.signature, public_key_bytes)
+        )
 
 InsightGeneratorFn = Callable[[Claim, Any, List[SessionExcerpt], Any], Any]
 
@@ -61,9 +67,22 @@ def build_inheritance_letter(
         raise ValueError("constrained-RAG generator must return non-empty text")
     if not isinstance(citations, (list, tuple)):
         raise ValueError("constrained-RAG generator must return a citation chain")
+    # Reject any verbatim run of six or more words from a source excerpt.
+    # Whole-excerpt containment alone is insufficient because a generated
+    # letter can leak a distinctive fragment while paraphrasing the rest.
     for excerpt in candidate_excerpts:
-        if excerpt.text and excerpt.text in text:
-            raise ValueError("Behavioral Letter must not expose raw session-excerpt text")
+        if not excerpt.text:
+            continue
+        excerpt_words = re.findall(r"\b\w+(?:['’-]\w+)*\b", excerpt.text.lower())
+        text_words = re.findall(r"\b\w+(?:['’-]\w+)*\b", text.lower())
+        if len(excerpt_words) < 6 or len(text_words) < 6:
+            continue
+        text_word_set = set()
+        for i in range(len(text_words) - 5):
+            text_word_set.add(tuple(text_words[i:i + 6]))
+        for i in range(len(excerpt_words) - 5):
+            if tuple(excerpt_words[i:i + 6]) in text_word_set:
+                raise ValueError("Behavioral Letter must not expose raw session-excerpt text")
     citation_ids = [str(x) for x in citations]
     allowed_sessions = {e.session_id for e in candidate_excerpts}
     if any(c not in allowed_sessions for c in citation_ids):
