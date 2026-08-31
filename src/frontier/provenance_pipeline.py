@@ -26,7 +26,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import warnings
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -415,34 +414,20 @@ class ProvenanceManager:
         )
         return record
 
-    def explain_retrofitted(self, claim_id: str, requesting_user_id: str = "") -> Dict:
+    def explain_retrofitted(self, claim_id: str, requesting_user_id: str) -> Dict:
         """
         Canonical explain() API — walks the stored provenance graph.
         No caller-provided citation chain is accepted (R2-F20.1 / S1720.4).
 
-        If requesting_user_id is provided, cross-user edges raise PermissionError.
-        If not provided (legacy usage), ownership checks are skipped.
+        `requesting_user_id` is REQUIRED.  Cross-user edges raise PermissionError.
+        Callers that previously omitted this argument must be updated — the legacy
+        bypass path has been removed because it allowed ownership checks to be
+        skipped entirely (Gap C from Sprint 17-20 final audit).
         """
-        if requesting_user_id:
-            return self.provenance_store.reconstruct_chain(claim_id, requesting_user_id)
-
-        warnings.warn(
-            "explain_retrofitted() without requesting_user_id bypasses ownership checks "
-            "and is deprecated. Provide requesting_user_id.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-        # Legacy path: fall back to claims_store attribute lookup
-        if not self.claims_store:
-            return {"error": "Claims store not configured"}
-        claim_data = self.claims_store.get_claim(claim_id)
-        if not claim_data:
-            return {"error": "Claim not found"}
-
-        return {
-            "claim": claim_data,
-            "belief_confidence": getattr(claim_data, "confidence", 0.0),
-            "inference": getattr(claim_data, "inference", "No inference data"),
-            "observation": getattr(claim_data, "observation", "No observation data"),
-        }
+        if not requesting_user_id:
+            raise ValueError(
+                "explain_retrofitted() requires a non-empty requesting_user_id. "
+                "The legacy no-user-id path has been removed because it bypassed "
+                "all cross-user ownership checks (Sprint 17-20 Gap C remediation)."
+            )
+        return self.provenance_store.reconstruct_chain(claim_id, requesting_user_id)

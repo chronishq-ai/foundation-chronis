@@ -76,25 +76,37 @@ class ExplainabilityAPI:
                 }
 
         # 5. Return structured explanation
+        gate_eval = getattr(claim, "gate_evaluation", None)
+        if hasattr(gate_eval, "admissible"):
+            confidence = gate_eval.admissible
+        elif hasattr(claim, "confidence"):
+            confidence = claim.confidence
+        else:
+            confidence = None
+
         return {
             "claim_id": claim_id,
-            "confidence": getattr(claim, "gate_evaluation", {}).admissible
-            if hasattr(getattr(claim, "gate_evaluation", None), "admissible")
-            else None,
+            "confidence": confidence,
             "provenance_chain": chain,
             "evidence_list": citations,
         }
 
     def _extract_citations(self, chain: Dict) -> list:
-        """Flatten all observation/inference text from the provenance chain."""
+        """Flatten all observation text/IDs from the provenance chain for clinical filtering.
+
+        Returns a list of strings: raw_data text when available, otherwise the
+        observation_id.  This ensures the clinical filter operates on actual
+        content rather than opaque ID strings that would never trigger it.
+        """
         citations = []
         for belief in chain.get("beliefs", []):
             for inf in belief.get("inferences", []):
                 for feat in inf.get("features", []):
                     for obs in feat.get("observations", []):
-                        obs_id = obs.get("observation_id", "")
-                        if obs_id:
-                            citations.append(obs_id)
+                        # Prefer raw_data text for clinical filtering; fall back to ID
+                        text = obs.get("raw_data") or obs.get("observation_id", "")
+                        if text:
+                            citations.append(str(text))
         return citations
 
     def teach_chronis(

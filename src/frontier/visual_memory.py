@@ -98,7 +98,13 @@ class DeterministicTestEncoder:
         import hashlib
         h = hashlib.sha256(str(frame_data).encode("utf-8")).digest()
         rng = np.random.default_rng(seed=int.from_bytes(h[:8], "big"))
-        return rng.random(self.dimension).astype("float32")
+        vec = rng.random(self.dimension).astype("float32")
+        # L2-normalize so test embeddings are structurally consistent with
+        # production CLIP embeddings (cosine-similarity space). Loophole 1 fix.
+        norm = np.linalg.norm(vec)
+        if norm > 0:
+            vec = vec / norm
+        return vec
 
 
 class VisualMemoryIndex:

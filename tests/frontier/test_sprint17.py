@@ -91,7 +91,10 @@ def test_voice_routing():
     for q in adversarial_queries:
         res = assistant.process_query("user1", q)
         fallback = assistant._handle_fallback()
-        assert res == fallback, f"Query should fall back but did not: '{q}'"
+        # fallback is now a dict with status="fallback"
+        assert isinstance(res, dict), f"Expected dict for adversarial query, got {type(res)}: '{q}'"
+        assert res.get("status") == "fallback", \
+            f"Query should produce fallback status but did not: '{q}' → {res}"
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +102,7 @@ def test_voice_routing():
 # ---------------------------------------------------------------------------
 
 def test_voice_handlers_not_stub_strings():
-    """R2-F17.2: Voice handler returns must be structured (not hardcoded strings)."""
+    """R2-F17.2: Voice handler returns must be structured dicts (not strings)."""
     mirror = MockMirrorProvider()
     wake_word = MockWakeWordProvider()
     assistant = VoiceAssistant(mirror=mirror, wake_word_provider=wake_word)
@@ -110,11 +113,12 @@ def test_voice_handlers_not_stub_strings():
     assert "status" in res
     assert res.get("error") is True or res.get("status") == "ok"
 
-    # Verify fallback contract: unlike active handlers, fallback is permitted
-    # to return a direct string message (S1720.3 / R2-F17.2).
+    # Gap A fix: fallback ALSO returns a structured dict (not a bare string)
     fallback_res = assistant._handle_fallback()
-    assert isinstance(fallback_res, str), "Fallback handler is expected to return a string, not a dict"
-
+    assert isinstance(fallback_res, dict), \
+        "Fallback handler must return a dict, not a bare string (Gap A remediation)"
+    assert fallback_res.get("status") == "fallback"
+    assert "message" in fallback_res
 
     # Stub strings that are forbidden
     stub_strings = [

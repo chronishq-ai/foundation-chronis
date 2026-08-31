@@ -442,55 +442,161 @@ def test_b8_end_to_end_security_10k():
         res = mock_store.get_claim_status(f"unk_{i}")
         if res is not None:
             unauthorized_disclosures += 1
-
-
     assert unauthorized_disclosures == 0, f"B8 FAIL: {unauthorized_disclosures} unauthorized disclosures"
     assert unauthorized_mutations == 0, f"B8 FAIL: {unauthorized_mutations} unauthorized mutations"
 
+
 @pytest.mark.slow
 def test_b7_visual_encoder():
-    """B7 - Visual Encoder: Verifies semantic properties, retrieval accuracy, and isolation."""
-    from frontier.visual_memory import SelfHostedCLIPEncoder, VisualMemoryIndex
+    """B7 - Visual Encoder: Verifies semantic properties, metadata, and isolation.
+
+    Gap D remediation: Recall@1/Recall@5 assertions against MockFAISS are NOT
+    meaningful evidence of retrieval quality because MockFAISS always returns
+    index 0 regardless of the query.  This benchmark verifies what IS provable
+    with MockFAISS:
+      - Real CLIP encoder properties: dimension, dtype, L2-norm, determinism
+      - Embedding discrimination (different inputs → different embeddings)
+      - Metadata contract: user_id, embedding_version, encoder_model_id stored
+      - Cross-user isolation: an empty index for a different user returns no results
+      - Index store/retrieve roundtrip: stored entries are retrievable
+
+    Recall@1/Recall@5 with real semantic similarity requires a real FAISS index.
+    That test is documented in test_b7_visual_recall_requires_real_faiss below.
+    """
+    from frontier.visual_memory import SelfHostedCLIPEncoder, VisualMemoryIndex, MockFAISS
     import numpy as np
-    
+
     encoder = SelfHostedCLIPEncoder()
     assert encoder.ENCODER_MODEL_ID != "self-hosted-clip-BLOCKED", "Encoder is still blocked"
     assert encoder.ENCODER_VERSION >= 1
-    
-    # 1. Dimension, dtype, normalization, consistency
+
+    # ------------------------------------------------------------------
+    # 1. Encoder property verification (these are meaningful with MockFAISS)
+    # ------------------------------------------------------------------
     vec_a = encoder.encode("test_query_A")
     vec_a_dup = encoder.encode("test_query_A")
     vec_b = encoder.encode("test_query_B")
-    
-    assert np.array_equal(vec_a, vec_a_dup), "Failed embedding consistency"
-    assert vec_a.shape == (512,), "Failed dimension contract"
-    assert vec_a.dtype == np.float32, "Failed dtype contract"
-    assert np.isclose(np.linalg.norm(vec_a), 1.0, atol=1e-4), "Failed L2 normalization"
-    
-    # 2. Retrieval Accuracy (Recall@1, Recall@5)
-    # Creating an index for testing
-    from frontier.visual_memory import MockFAISS
-    index = VisualMemoryIndex(user_id="user_b7", encoder=encoder, index_override=MockFAISS(encoder.dimension))
-    
-    # Insert 10 images to avoid too long test times but prove recall
-    for i in range(10):
+
+    assert np.array_equal(vec_a, vec_a_dup), \
+        "FAIL: Encoder is NOT deterministic — identical inputs produce different embeddings"
+    assert vec_a.shape == (512,), \
+        f"FAIL: Expected dimension 512, got {vec_a.shape}"
+    assert vec_a.dtype == np.float32, \
+        f"FAIL: Expected float32, got {vec_a.dtype}"
+    assert np.isclose(np.linalg.norm(vec_a), 1.0, atol=1e-4), \
+        "FAIL: Embeddings are not L2-normalized"
+    assert not np.array_equal(vec_a, vec_b), \
+        "FAIL: Different inputs produce identical embeddings — no discrimination"
+
+    # ------------------------------------------------------------------
+    # 2. Metadata contract: user_id, embedding_version, encoder_model_id
+    # ------------------------------------------------------------------
+    index = VisualMemoryIndex(
+        user_id="user_b7",
+        encoder=encoder,
+        index_override=MockFAISS(encoder.dimension),
+    )
+    index.process_and_store([{
+        "salience_level": "L2",
+        "frame_data": "test_frame",
+        "canonical_record_pointer": "rec_meta_test",
+    }])
+    assert len(index.entries) == 1
+    entry = index.entries[0]
+    assert entry["user_id"] == "user_b7", "FAIL: user_id not stored in embedding metadata"
+    assert entry["embedding_version"] == encoder.ENCODER_VERSION, \
+        "FAIL: embedding_version not stored"
+    assert entry["encoder_model_id"] == encoder.ENCODER_MODEL_ID, \
+        "FAIL: encoder_model_id not stored"
+    assert entry["canonical_record_pointer"] == "rec_meta_test"
+
+    # ------------------------------------------------------------------
+    # 3. Store/retrieve roundtrip — entries stored are retrievable
+    # ------------------------------------------------------------------
+    for i in range(5):
         index.process_and_store([{
             "salience_level": "L2",
             "frame_data": f"image_data_{i}",
-            "canonical_record_pointer": f"rec_{i}"
+            "canonical_record_pointer": f"rec_{i}",
         }])
-        
-    # Recall@1
-    res_1 = index.retrieve(encoder.encode("image_data_5"), k=1)
-    assert len(res_1) == 1
-    # MockFAISS is hardcoded to return index 0
-    assert res_1[0]["canonical_record_pointer"] == "rec_0", "Failed Recall@1"
-    
-    # Recall@5
-    res_5 = index.retrieve(encoder.encode("image_data_8"), k=5)
-    assert any(r["canonical_record_pointer"] == "rec_0" for r in res_5), "Failed Recall@5"
-    
-    # 3. Cross-user leakage
-    index_other = VisualMemoryIndex(user_id="user_other", encoder=encoder, index_override=MockFAISS(encoder.dimension))
+    assert len(index.entries) == 6  # 1 meta test + 5 new
+
+    # MockFAISS.search returns index 0 unconditionally — this verifies the
+    # roundtrip works (retrieve returns an entry) without asserting semantic rank.
+    res = index.retrieve(encoder.encode("image_data_2"), k=1)
+    assert len(res) == 1, "FAIL: retrieve returned no results after storing entries"
+    assert "canonical_record_pointer" in res[0], "FAIL: missing canonical_record_pointer in result"
+    assert res[0]["user_id"] == "user_b7", "FAIL: user_id not present in retrieve result"
+    assert res[0]["embedding_version"] == encoder.ENCODER_VERSION
+
+    # ------------------------------------------------------------------
+    # 4. Cross-user isolation: different user's empty index returns nothing
+    # ------------------------------------------------------------------
+    index_other = VisualMemoryIndex(
+        user_id="user_other",
+        encoder=encoder,
+        index_override=MockFAISS(encoder.dimension),
+    )
     res_other = index_other.retrieve(encoder.encode("image_data_5"), k=1)
-    assert len(res_other) == 0, "Failed cross-user leakage"
+    assert len(res_other) == 0, \
+        "FAIL: Cross-user leakage — empty index returned results for different user"
+
+    # ------------------------------------------------------------------
+    # 5. Deletion contract
+    # ------------------------------------------------------------------
+    index.delete_index()
+    assert len(index.entries) == 0, "FAIL: delete_index did not clear entries"
+    res_after_del = index.retrieve(encoder.encode("image_data_2"), k=1)
+    assert len(res_after_del) == 0, "FAIL: retrieve returned results after delete_index"
+
+
+@pytest.mark.slow
+def test_b7_visual_recall_requires_real_faiss():
+    """B7 Recall@1/Recall@5 — documented as NOT provable with MockFAISS.
+
+    Gap D documentation: this test explicitly asserts that MockFAISS cannot
+    be used to prove semantic recall because it always returns index 0
+    regardless of the query.  A real Recall@1/Recall@5 test requires faiss-cpu.
+
+    If faiss-cpu is installed in the test environment, this test is replaced
+    by a real semantic recall test.  Otherwise it is skipped with a clear message.
+    """
+    try:
+        import faiss  # noqa: F401
+        faiss_available = True
+    except ImportError:
+        faiss_available = False
+
+    if not faiss_available:
+        pytest.skip(
+            "Recall@1/Recall@5 requires faiss-cpu to be installed. "
+            "MockFAISS returns a hardcoded index and cannot measure semantic recall. "
+            "Install faiss-cpu to enable this benchmark."
+        )
+
+    # --- Real FAISS recall test (only runs when faiss-cpu is installed) ---
+    from frontier.visual_memory import SelfHostedCLIPEncoder, VisualMemoryIndex
+    import numpy as np
+
+    encoder = SelfHostedCLIPEncoder()
+    # Use real FAISS index (no index_override)
+    index = VisualMemoryIndex(user_id="user_recall", encoder=encoder)
+
+    queries = [f"unique_scene_{i}" for i in range(10)]
+    for i, q in enumerate(queries):
+        index.process_and_store([{
+            "salience_level": "L2",
+            "frame_data": q,
+            "canonical_record_pointer": f"rec_{i}",
+        }])
+
+    # Recall@1: query for scene_5 — the most similar stored embedding should be rec_5
+    res_1 = index.retrieve(encoder.encode("unique_scene_5"), k=1)
+    assert len(res_1) >= 1
+    assert res_1[0]["canonical_record_pointer"] == "rec_5", \
+        f"Recall@1 FAIL: expected rec_5, got {res_1[0]['canonical_record_pointer']}"
+
+    # Recall@5: rec_5 must appear in top-5
+    res_5 = index.retrieve(encoder.encode("unique_scene_5"), k=5)
+    ptrs = [r["canonical_record_pointer"] for r in res_5]
+    assert "rec_5" in ptrs, f"Recall@5 FAIL: rec_5 not in top-5: {ptrs}"

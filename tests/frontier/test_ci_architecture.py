@@ -125,11 +125,9 @@ def _check_no_random_rand(source: str) -> list:
     return hits
 
 
-# The allowlist is a temporary measure for the BLOCKED encoder.
-# When S1720.8 transitions from BLOCKED → READY, DELETE THIS ENTRY.
-_RANDOM_RAND_TEMPORARY_ALLOWLIST = {
-    "visual_memory.py",  # SelfHostedCLIPEncoder placeholder — DELETE when real encoder installed
-}
+# S1720.8 has been unblocked — real CLIP encoder is installed.
+# The allowlist is now empty.  Any new np.random.rand usage is a violation.
+_RANDOM_RAND_TEMPORARY_ALLOWLIST: set = set()
 
 
 def test_rule2_no_random_rand_in_production():
@@ -185,34 +183,42 @@ def test_rule3_detects_violation():
 
 
 # ---------------------------------------------------------------------------
-# Rule 4: no unsafe deserialization in production code (pickle/dill load/loads)
+# Rule 4: no unsafe serialization/deserialization in production code
 # ---------------------------------------------------------------------------
 
 def _check_no_unsafe_deserialization(source: str) -> list:
-    """Catches pickle.load, pickle.loads, dill.load, dill.loads."""
+    """Catches pickle/dill load, loads, dump, dumps — both directions banned.
+
+    Serializing pickle data creates unsafe blobs that can later be deserialized
+    by any process, so both directions are prohibited (Gap E remediation).
+    """
     hits = []
     for module, func in [
         ("pickle", "load"),
         ("pickle", "loads"),
+        ("pickle", "dump"),
+        ("pickle", "dumps"),
         ("dill", "load"),
         ("dill", "loads"),
+        ("dill", "dump"),
+        ("dill", "dumps"),
     ]:
         hits.extend(_ast_contains_call(source, module, func))
     return hits
 
 
 def test_rule4_no_pickle_deserialization_in_production():
-    """Unsafe deserialization (pickle/dill load/loads) must not exist in production."""
+    """Unsafe pickle/dill serialization or deserialization must not exist in production."""
     for fname, src in _production_sources():
         hits = _check_no_unsafe_deserialization(src)
         assert not hits, (
             f"CI VIOLATION [no_unsafe_deserialization]: '{fname}' calls unsafe "
-            f"deserialization at lines {hits}"
+            f"pickle/dill operation at lines {hits}"
         )
 
 
 def test_rule4_detects_pickle_loads_violation():
-    """Test-of-the-test."""
+    """Test-of-the-test for pickle.loads."""
     bad_code = textwrap.dedent("""
         import pickle, base64
         obj = pickle.loads(base64.b64decode(payload))
@@ -230,6 +236,27 @@ def test_rule4_detects_pickle_load_violation():
     """)
     hits = _check_no_unsafe_deserialization(bad_code)
     assert len(hits) > 0, "CI rule MUST detect pickle.load — rule is broken"
+
+
+def test_rule4_detects_pickle_dump_violation():
+    """Test-of-the-test for pickle.dump — serialization is also banned."""
+    bad_code = textwrap.dedent("""
+        import pickle
+        with open("file.bin", "wb") as f:
+            pickle.dump(obj, f)
+    """)
+    hits = _check_no_unsafe_deserialization(bad_code)
+    assert len(hits) > 0, "CI rule MUST detect pickle.dump — rule is broken"
+
+
+def test_rule4_detects_pickle_dumps_violation():
+    """Test-of-the-test for pickle.dumps — serialization is also banned."""
+    bad_code = textwrap.dedent("""
+        import pickle, base64
+        payload = base64.b64encode(pickle.dumps(obj)).decode()
+    """)
+    hits = _check_no_unsafe_deserialization(bad_code)
+    assert len(hits) > 0, "CI rule MUST detect pickle.dumps — rule is broken"
 
 
 # ---------------------------------------------------------------------------

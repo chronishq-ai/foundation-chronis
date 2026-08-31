@@ -152,9 +152,19 @@ class VoiceAssistant:
             }
         return self.explainability_api.explain(claim_id, user_id)
 
-    def _handle_fallback(self) -> str:
-        """Explicit fallback for unsupported queries."""
-        return (
-            "I'm sorry, I cannot help with that general question. "
-            "I can only assist with your personal memories, insights, and explanations."
-        )
+    def _handle_fallback(self) -> dict:
+        """
+        Explicit fallback for unsupported/out-of-scope queries.
+
+        Returns a structured dict (not a bare string) so that all callers of
+        process_query() can unconditionally do result.get("status") / result["intent"]
+        without type-checking the return value.
+        """
+        return {
+            "status": "fallback",
+            "intent": "fallback",
+            "message": (
+                "I'm sorry, I cannot help with that general question. "
+                "I can only assist with your personal memories, insights, and explanations."
+            ),
+        }
