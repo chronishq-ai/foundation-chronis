@@ -474,7 +474,11 @@ def test_b7_visual_encoder():
     
     # Insert 10 images to avoid too long test times but prove recall
     for i in range(10):
-        index.add_evidence(f"image_data_{i}", canonical_record_pointer=f"rec_{i}")
+        index.process_and_store([{
+            "salience_level": "L2",
+            "frame_data": f"image_data_{i}",
+            "canonical_record_pointer": f"rec_{i}"
+        }])
         
     # Recall@1
     res_1 = index.retrieve(encoder.encode("image_data_5"), k=1)
