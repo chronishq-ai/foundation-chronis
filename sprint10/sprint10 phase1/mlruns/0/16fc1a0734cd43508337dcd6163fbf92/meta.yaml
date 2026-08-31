@@ -1,0 +1,14 @@
+artifact_uri: file:///Volumes/work/chronis/task_extracted/task/mlruns/0/16fc1a0734cd43508337dcd6163fbf92/artifacts
+end_time: 1787496454442
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: 16fc1a0734cd43508337dcd6163fbf92
+run_name: delightful-snake-520
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1787496454234
+status: 3
+tags: []
+user_id: mayankmishra

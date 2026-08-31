@@ -1,0 +1,14 @@
+artifact_uri: file:///Volumes/work/chronis/task_extracted/task/mlruns/0/f5f1eb20d1e74a29adeecb6e546d2a0b/artifacts
+end_time: 1787496549877
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: f5f1eb20d1e74a29adeecb6e546d2a0b
+run_name: stately-sponge-825
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1787496549661
+status: 3
+tags: []
+user_id: mayankmishra

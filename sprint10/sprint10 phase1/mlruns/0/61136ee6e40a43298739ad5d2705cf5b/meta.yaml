@@ -1,0 +1,14 @@
+artifact_uri: file:///Volumes/work/chronis/task_extracted/task/mlruns/0/61136ee6e40a43298739ad5d2705cf5b/artifacts
+end_time: 1787497427379
+entry_point_name: ''
+experiment_id: '0'
+lifecycle_stage: active
+run_id: 61136ee6e40a43298739ad5d2705cf5b
+run_name: bouncy-foal-109
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1787497426897
+status: 3
+tags: []
+user_id: mayankmishra
