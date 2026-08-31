@@ -1,0 +1,7 @@
+numpy
+torch
+transformers
+Pillow
+
+[test]
+pytest>=7
