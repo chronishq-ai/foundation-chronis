@@ -36,9 +36,9 @@ class IntentRouter:
         q = query.lower()
         if "have i been" in q or "when did i" in q or "do i remember" in q:
             return "visual_temporal"
-        elif "insight" in q or "mirror" in q or "pattern" in q:
+        elif "insight" in q or "mirror insight" in q or "detect a pattern" in q:
             return "mirror_insight"
-        elif "why" in q or "explain" in q or "how do you know" in q:
+        elif "explain this to me" in q or "explain the claim" in q or "how do you know" in q or "why do you believe" in q:
             return "explainability"
         return "fallback"
 

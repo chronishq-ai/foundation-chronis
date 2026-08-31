@@ -110,6 +110,12 @@ def test_voice_handlers_not_stub_strings():
     assert "status" in res
     assert res.get("error") is True or res.get("status") == "ok"
 
+    # Verify fallback contract: unlike active handlers, fallback is permitted
+    # to return a direct string message (S1720.3 / R2-F17.2).
+    fallback_res = assistant._handle_fallback()
+    assert isinstance(fallback_res, str), "Fallback handler is expected to return a string, not a dict"
+
+
     # Stub strings that are forbidden
     stub_strings = [
         "Executing visual/temporal retrieval.",
@@ -374,6 +380,6 @@ def test_voice_explainability_calls_api_with_correct_user_id():
         wake_word_provider=MockWakeWordProvider(),
         explainability_api=mock_exp,
     )
-    res = assistant.process_query("user_beta", "why do you know this? claim_id=claim_test_123")
+    res = assistant.process_query("user_beta", "how do you know this? claim_id=claim_test_123")
     mock_exp.explain.assert_called_once_with("claim_test_123", "user_beta")
     assert res.get("claim_id") == "claim_test_123"

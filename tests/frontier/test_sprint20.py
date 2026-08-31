@@ -322,23 +322,11 @@ def test_systemic_cross_user_isolation():
 # S1720.8 / R2-F20.5 — Visual encoder (BLOCKED ticket)
 # ---------------------------------------------------------------------------
 
-def test_visual_embedding_randomness_still_present():
-    """S1720.8: Documents that production encoder still returns random vectors (BLOCKED)."""
-    encoder = SelfHostedCLIPEncoder()
-    vec1 = encoder.encode("identical_image_data")
-    vec2 = encoder.encode("identical_image_data")
-    assert not np.array_equal(vec1, vec2), "Production encoder is still random — BLOCKED"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "S1720.8 T2: Production encoder is non-deterministic (BLOCKED). "
-        "xfail(strict=True) catches if this accidentally passes before real encoder is wired."
-    )
-)
+
 def test_visual_embedding_consistency():
-    """S1720.8: Identical inputs must produce identical vectors (fails until real encoder)."""
+    """S1720.8: Identical inputs must produce identical vectors."""
     encoder = SelfHostedCLIPEncoder()
     vec1 = encoder.encode("identical_image_data")
     vec2 = encoder.encode("identical_image_data")

@@ -80,7 +80,7 @@ def _check_no_mock_event(source: str) -> list:
     return _ast_contains_string(source, "mock_event")
 
 
-def test_no_mock_event_in_production():
+def test_rule1_no_mock_event_in_production():
     """Production code must not contain the 'mock_event' literal."""
     for fname, src in _production_sources():
         hits = _check_no_mock_event(src)
@@ -90,7 +90,7 @@ def test_no_mock_event_in_production():
         )
 
 
-def test_ci_detects_mock_event_violation():
+def test_rule1_detects_violation():
     """Test-of-the-test: prove the rule catches a violation."""
     bad_code = textwrap.dedent("""
         def get_context(user_id, time_range, query_type):
@@ -132,7 +132,7 @@ _RANDOM_RAND_TEMPORARY_ALLOWLIST = {
 }
 
 
-def test_random_rand_only_in_blocked_encoder():
+def test_rule2_no_random_rand_in_production():
     """
     np.random.rand must only appear inside the temporary BLOCKED-encoder allowlist.
     Any NEW usage outside the allowlist is a violation.
@@ -148,7 +148,7 @@ def test_random_rand_only_in_blocked_encoder():
             )
 
 
-def test_ci_detects_random_rand_violation():
+def test_rule2_detects_violation():
     """Test-of-the-test."""
     bad_code = textwrap.dedent("""
         import numpy as np
@@ -167,7 +167,7 @@ def _check_no_object_fabrication(source: str) -> list:
     return _ast_contains_string(source, "Object identified as")
 
 
-def test_no_object_fabrication_in_production():
+def test_rule3_no_object_fabrication_in_production():
     """'Object identified as' must never appear as a literal in production."""
     for fname, src in _production_sources():
         hits = _check_no_object_fabrication(src)
@@ -177,7 +177,7 @@ def test_no_object_fabrication_in_production():
         )
 
 
-def test_ci_detects_object_fabrication_violation():
+def test_rule3_detects_violation():
     """Test-of-the-test."""
     bad_code = 'return "Object identified as X."'
     hits = _check_no_object_fabrication(bad_code)
@@ -201,7 +201,7 @@ def _check_no_unsafe_deserialization(source: str) -> list:
     return hits
 
 
-def test_no_pickle_loads_in_production():
+def test_rule4_no_pickle_deserialization_in_production():
     """Unsafe deserialization (pickle/dill load/loads) must not exist in production."""
     for fname, src in _production_sources():
         hits = _check_no_unsafe_deserialization(src)
@@ -211,7 +211,7 @@ def test_no_pickle_loads_in_production():
         )
 
 
-def test_ci_detects_pickle_loads_violation():
+def test_rule4_detects_pickle_loads_violation():
     """Test-of-the-test."""
     bad_code = textwrap.dedent("""
         import pickle, base64
@@ -221,7 +221,7 @@ def test_ci_detects_pickle_loads_violation():
     assert len(hits) > 0, "CI rule MUST detect pickle.loads — rule is broken"
 
 
-def test_ci_detects_pickle_load_violation():
+def test_rule4_detects_pickle_load_violation():
     """Test-of-the-test for pickle.load."""
     bad_code = textwrap.dedent("""
         import pickle
@@ -247,7 +247,7 @@ def _check_no_retrieval_bypass(source: str) -> list:
     return hits
 
 
-def test_no_retrieval_bypass_in_interface_files():
+def test_rule5_no_retrieval_bypass_in_interface_files():
     """Interface files must not bypass CentralRetrievalCore."""
     for filename in INTERFACE_FILES:
         filepath = PRODUCTION_ROOT / filename
@@ -260,7 +260,7 @@ def test_no_retrieval_bypass_in_interface_files():
         )
 
 
-def test_ci_detects_retrieval_bypass_violation():
+def test_rule5_detects_violation():
     """Test-of-the-test."""
     bad_code = "from frontier.visual_memory import VisualMemoryIndex"
     hits = _check_no_retrieval_bypass(bad_code)
@@ -279,7 +279,7 @@ def _check_no_hard_coded_consent(source: str) -> list:
 EXCEPTED_FILES = {"central_retrieval_core.py", "policy.py"}
 
 
-def test_no_hard_coded_consent_in_production():
+def test_rule6_no_hard_coded_consent_in_production():
     """
     'consent_tier' must not appear as a hard-coded literal in production files
     (callers must use the policy engine).
@@ -296,7 +296,7 @@ def test_no_hard_coded_consent_in_production():
         )
 
 
-def test_ci_detects_hard_coded_consent_violation():
+def test_rule6_detects_violation():
     """Test-of-the-test."""
     bad_code = 'consent = {"consent_tier": 2}'
     hits = _check_no_hard_coded_consent(bad_code)
@@ -323,7 +323,7 @@ def _check_no_caller_provenance(source: str) -> list:
     return hits
 
 
-def test_no_caller_controlled_provenance():
+def test_rule7_no_caller_controlled_provenance():
     """'claim_data' as a parameter name must not appear in explainability production code."""
     filepath = PRODUCTION_ROOT / "explainability.py"
     if not filepath.exists():
@@ -335,7 +335,7 @@ def test_no_caller_controlled_provenance():
     )
 
 
-def test_ci_detects_caller_provenance_violation():
+def test_rule7_detects_violation():
     """Test-of-the-test: prove the rule catches a function with claim_data param."""
     bad_code = textwrap.dedent("""
         def explain(self, claim_data: dict) -> dict:
@@ -360,7 +360,7 @@ def _check_no_synthetic_hssm(source: str) -> list:
     return hits
 
 
-def test_no_synthetic_hssm_in_production():
+def test_rule8_no_synthetic_hssm_in_production():
     """No synthetic/mock HSSM imports in production."""
     for fname, src in _production_sources():
         hits = _check_no_synthetic_hssm(src)
@@ -370,7 +370,7 @@ def test_no_synthetic_hssm_in_production():
         )
 
 
-def test_ci_detects_synthetic_hssm_violation():
+def test_rule8_detects_violation():
     """Test-of-the-test."""
     bad_code = "from backbone.synthetic_hssm import MockHSSM"
     hits = _check_no_synthetic_hssm(bad_code)
@@ -393,7 +393,7 @@ def _check_no_unqualified_interface_imports(source: str) -> list:
     return hits
 
 
-def test_no_unqualified_interface_imports_in_production():
+def test_rule10_interface_import_consistency():
     """All interface imports must use frontier.interfaces.*, not interfaces.*"""
     for fname, src in _production_sources():
         hits = _check_no_unqualified_interface_imports(src)
@@ -403,7 +403,7 @@ def test_no_unqualified_interface_imports_in_production():
         )
 
 
-def test_ci_detects_unqualified_interface_import_violation():
+def test_rule10_detects_violation():
     """Test-of-the-test."""
     bad_code = "from interfaces.claims_store import ClaimsStoreProvider"
     hits = _check_no_unqualified_interface_imports(bad_code)
@@ -435,7 +435,7 @@ def _check_no_fabricated_identity_return(source: str) -> list:
     return hits
 
 
-def test_no_fabricated_identity_return_in_production():
+def test_rule11_no_fabricated_identity_in_production():
     """Production code must not return fabricated identity strings."""
     for fname, src in _production_sources():
         hits = _check_no_fabricated_identity_return(src)
@@ -445,7 +445,7 @@ def test_no_fabricated_identity_return_in_production():
         )
 
 
-def test_ci_detects_fabricated_identity_violation():
+def test_rule11_detects_violation():
     """Test-of-the-test."""
     bad_code = textwrap.dedent("""
         def resolve(name):
@@ -455,7 +455,7 @@ def test_ci_detects_fabricated_identity_violation():
     assert len(hits) > 0, "CI rule MUST detect fabricated identity return"
 
 
-def test_ci_does_not_false_positive_on_legitimate_text():
+def test_rule11_does_not_false_positive_on_legitimate_text():
     """Rule must not flag legitimate uses of these phrases in non-return contexts."""
     ok_code = textwrap.dedent("""
         # identity recognized as uncertain is a valid log message
@@ -464,3 +464,110 @@ def test_ci_does_not_false_positive_on_legitimate_text():
     """)
     hits = _check_no_fabricated_identity_return(ok_code)
     assert len(hits) == 0, "CI rule must not flag non-return usages"
+
+
+# ---------------------------------------------------------------------------
+# Rule 9: no raw-variance / 1-p production shortcuts
+# ---------------------------------------------------------------------------
+
+_RAW_VARIANCE_FORBIDDEN = [
+    "raw_variance",
+    "1 - p",
+    "1-p",
+]
+
+
+def _check_no_raw_variance_production(source: str) -> list:
+    """
+    Detects raw-variance / 1-p coherence-alias shortcuts in production code.
+    These are forbidden because they are not semantically equivalent to the
+    full coherence computation and may produce misleading confidence estimates.
+    Matches are returned as line numbers.
+    """
+    hits = []
+    for i, line in enumerate(source.splitlines(), start=1):
+        for pattern in _RAW_VARIANCE_FORBIDDEN:
+            if pattern in line:
+                # Skip pure comments and docstrings (lines that start with # after strip)
+                stripped = line.strip()
+                if not stripped.startswith("#"):
+                    hits.append(i)
+                    break
+    return hits
+
+
+def test_rule9_no_raw_variance_in_production():
+    """
+    Raw-variance / 1-p statistical shortcuts must not appear in production
+    computation paths. These are forbidden legacy patterns.
+    """
+    for fname, src in _production_sources():
+        hits = _check_no_raw_variance_production(src)
+        assert not hits, (
+            f"CI VIOLATION [no_raw_variance]: '{fname}' contains raw_variance / 1-p "
+            f"shortcut at lines {hits}"
+        )
+
+
+def test_rule9_detects_violation():
+    """Test-of-the-test: prove the rule catches raw_variance usage."""
+    bad_code = textwrap.dedent("""
+        def score(p: float) -> float:
+            return 1 - p  # coherence alias shortcut
+    """)
+    hits = _check_no_raw_variance_production(bad_code)
+    assert len(hits) > 0, "CI rule MUST detect '1 - p' shortcut — rule is broken"
+
+
+def test_rule9_does_not_flag_comments():
+    """Rule must not flag raw_variance / 1-p in pure comments."""
+    ok_code = textwrap.dedent("""
+        # raw_variance is not used here — we use the full coherence formula
+        # 1-p is a legacy approximation and is NOT used in this implementation
+    """)
+    hits = _check_no_raw_variance_production(ok_code)
+    assert len(hits) == 0, "CI rule must not flag pure comment lines"
+
+
+# ---------------------------------------------------------------------------
+# Rule 12: canonical package import graph (no src.frontier.* imports)
+# ---------------------------------------------------------------------------
+
+def _check_no_src_package_prefix(source: str) -> list:
+    """
+    Detects 'from src.frontier...' or 'import src.frontier...' imports.
+    These would indicate a broken package install where code is patching
+    around the canonical install path.
+    """
+    tree = ast.parse(source)
+    hits = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("src."):
+                    hits.append(node.lineno)
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            if module.startswith("src."):
+                hits.append(node.lineno)
+    return hits
+
+
+def test_rule12_no_src_package_prefix_in_production():
+    """
+    Production code must never import via 'src.frontier.*'.
+    All imports must resolve through the canonical installed package path.
+    """
+    for fname, src in _production_sources():
+        hits = _check_no_src_package_prefix(src)
+        assert not hits, (
+            f"CI VIOLATION [canonical_import]: '{fname}' uses 'src.' package prefix "
+            f"at lines {hits}. Use 'from frontier...' instead."
+        )
+
+
+def test_rule12_detects_violation():
+    """Test-of-the-test."""
+    bad_code = "from src.frontier.retrieval import RetrievalAPI"
+    hits = _check_no_src_package_prefix(bad_code)
+    assert len(hits) > 0, "CI rule MUST detect 'src.frontier' import prefix — rule is broken"

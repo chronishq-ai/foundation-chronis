@@ -52,6 +52,7 @@ src/frontier/voice_assistant.py
 src/frontier/interfaces/__init__.py
 src/frontier/interfaces/claims_store.py
 src/frontier/interfaces/cse.py
+src/frontier/interfaces/encoder.py
 src/frontier/interfaces/layer0.py
 src/frontier/interfaces/llm.py
 src/frontier/interfaces/mirror.py
@@ -64,7 +65,9 @@ tests/test_features.py
 tests/test_integration.py
 tests/test_preprocessing.py
 tests/frontier/__init__.py
+tests/frontier/test_benchmarks.py
 tests/frontier/test_ci_architecture.py
+tests/frontier/test_second_pass_audit.py
 tests/frontier/test_sprint17.py
 tests/frontier/test_sprint18.py
 tests/frontier/test_sprint19.py

@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "foundation-chronis"
 version = "0.1.0"
 requires-python = ">=3.10"
-dependencies = ["numpy"]
+dependencies = ["numpy", "torch", "transformers", "Pillow"]
 
 [project.optional-dependencies]
 test = ["pytest>=7"]

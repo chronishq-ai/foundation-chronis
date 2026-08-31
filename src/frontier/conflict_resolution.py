@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from .provenance_pipeline import Belief, ProvenanceRecord
+from .provenance_pipeline import Belief, ProvenanceRecord, ProvenanceStore
 from .interfaces.claims_store import ClaimsStoreProvider
 
 

@@ -18,10 +18,10 @@ class VisualEncoderMetadata:
     similarity_metric: str  # e.g. "cosine"
 
 
-# Placeholder metadata while BLOCKED:
-BLOCKED_ENCODER_METADATA = VisualEncoderMetadata(
-    model_id="self-hosted-clip-BLOCKED",
-    version=0,
+# Default metadata for the real CLIP encoder
+DEFAULT_ENCODER_METADATA = VisualEncoderMetadata(
+    model_id="openai/clip-vit-base-patch32",
+    version=1,
     dimension=512,
     dtype="float32",
     normalization="L2",

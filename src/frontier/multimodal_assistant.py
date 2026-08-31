@@ -16,7 +16,7 @@ from typing import Any, Dict, Optional
 
 from .interfaces.llm import LLMProvider
 from .interfaces.policy import PolicyEngine
-from .interfaces.encoder import VisualEncoderMetadata, BLOCKED_ENCODER_METADATA
+from .interfaces.encoder import VisualEncoderMetadata, DEFAULT_ENCODER_METADATA
 
 # Minimum cosine-similarity for a confident visual match
 VISUAL_MATCH_THRESHOLD = 0.75
@@ -41,7 +41,7 @@ class MultimodalAssistant:
         self.llm_provider = llm_provider
         self.policy_engine = policy_engine
         self.visual_index_provider = visual_index_provider   # callable: user_id → VisualMemoryIndex
-        self.encoder_metadata = encoder_metadata or BLOCKED_ENCODER_METADATA
+        self.encoder_metadata = encoder_metadata or DEFAULT_ENCODER_METADATA
 
     def _route_general_knowledge(self, query: str) -> str:
         """
