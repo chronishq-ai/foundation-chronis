@@ -469,8 +469,7 @@ def test_b7_visual_encoder():
     
     # 2. Retrieval Accuracy (Recall@1, Recall@5)
     # Creating an index for testing
-    index = VisualMemoryIndex(user_id="user_b7")
-    index.encoder = encoder
+    index = VisualMemoryIndex(user_id="user_b7", encoder=encoder)
     
     # Insert 10 images to avoid too long test times but prove recall
     for i in range(10):
@@ -486,7 +485,6 @@ def test_b7_visual_encoder():
     assert any(r["canonical_record_pointer"] == "rec_8" for r in res_5), "Failed Recall@5"
     
     # 3. Cross-user leakage
-    index_other = VisualMemoryIndex(user_id="user_other")
-    index_other.encoder = encoder
+    index_other = VisualMemoryIndex(user_id="user_other", encoder=encoder)
     res_other = index_other.retrieve(encoder.encode("image_data_5"), k=1)
     assert len(res_other) == 0, "Failed cross-user leakage"
