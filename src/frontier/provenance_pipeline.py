@@ -221,16 +221,10 @@ class ProvenanceStore:
         if self._store_path is None:
             return
         record = json.dumps({"node_type": node_type, "data": data})
-        tmp = self._store_path + ".tmp"
-        # Atomic append: load existing + new, write to tmp, rename
-        existing = ""
-        if os.path.exists(self._store_path):
-            with open(self._store_path, "r", encoding="utf-8") as f:
-                existing = f.read()
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(existing)
+        # Bug 5 fix: True append mode. Safe, O(1), and avoids Windows os.replace 
+        # non-atomicity if the file is held by an AV scanner.
+        with open(self._store_path, "a", encoding="utf-8") as f:
             f.write(record + "\n")
-        os.replace(tmp, self._store_path)
 
     def store_observation(self, obs: Observation) -> None:
         self._observations[obs.observation_id] = obs

@@ -12,7 +12,7 @@ in this module.
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional, Sequence
 import uuid
@@ -57,7 +57,7 @@ class Claim:
     level: ClaimLevel
     dominant_divergence_type: Optional[str]  # None for Level 0/1 claims
     gate_evaluation: GateEvaluation
-    created_at: datetime = field(default_factory=datetime.utcnow)
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     is_dual_structured: bool = False  # genuinely split (phase-split/context-split) identity pattern
     dual_structure_components: Optional[Sequence["Claim"]] = None
 

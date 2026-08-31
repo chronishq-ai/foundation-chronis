@@ -65,20 +65,28 @@ class CentralRetrievalCore:
         )
 
         # --- 3. Per-evidence ownership verification — FAIL CLOSED ---
+        # Items with NO owner_user_id are also a violation: we cannot return
+        # evidence of unknown provenance.  The guard is intentionally strict:
+        # owner != user_id  (this includes owner == None).
         evidence_items = evidence_package.get("evidence_items", [])
         for item in evidence_items:
             owner = item.get("owner_user_id")
-            if owner is not None and owner != user_id:
+            if owner != user_id:
                 raise CrossUserEvidenceError(
-                    f"SECURITY VIOLATION: evidence item owner '{owner}' does not match "
-                    f"requesting user '{user_id}'. Retrieval aborted (fail-closed). "
+                    f"SECURITY VIOLATION: evidence item owner {owner!r} does not match "
+                    f"requesting user {user_id!r}. Retrieval aborted (fail-closed). "
                     f"Interface: {requesting_interface}"
                 )
 
         # --- 4. Deduplicate + rank (only after verification) ---
+        # Items with no content_pointer are skipped: a None key would collapse
+        # all pointer-less items under a single dict entry, silently dropping
+        # all but the highest-confidence one (Bug 2 remediation).
         unique_items: Dict[str, Dict] = {}
         for item in evidence_items:
             ptr = item.get("content_pointer")
+            if ptr is None:
+                continue   # cannot deduplicate an item with no content pointer
             if ptr not in unique_items or item.get("confidence", 0) > unique_items[ptr].get("confidence", 0):
                 unique_items[ptr] = item
 

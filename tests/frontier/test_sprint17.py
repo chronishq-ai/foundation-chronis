@@ -58,10 +58,10 @@ def test_voice_routing():
 
     # Supported queries should hit specific intents (not fallback)
     visual_res = assistant.process_query("user1", "have I been here before?")
-    assert visual_res != assistant._handle_fallback(), "visual_temporal should not fall back"
+    assert visual_res.get("intent") == "visual_temporal", "visual_temporal should not fall back"
 
     explain_res = assistant.process_query("user1", "explain this to me")
-    assert explain_res != assistant._handle_fallback(), "explainability should not fall back"
+    assert explain_res.get("intent") == "explainability", "explainability should not fall back"
 
     # S1720.3: 21-query adversarial suite — all must hit fallback
     adversarial_queries = [

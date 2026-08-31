@@ -108,12 +108,14 @@ class VoiceAssistant:
         Surfaces a Mirror-style grounded insight.
         Returns structured dict.
         """
-        insight = self.mirror.get_insight(user_id, query) if hasattr(self.mirror, "get_insight") else None
+        # get_insight() is now part of the MirrorProvider interface contract.
+        # No hasattr guard needed — all implementations must provide it.
+        insight = self.mirror.get_insight(user_id, query)
         if insight is None:
             return {
-                "status": "mirror_not_configured",
-                "error": True,
+                "status": "no_insight_available",
                 "intent": "mirror_insight",
+                "message": "No relevant mirror insight found for this query.",
             }
         return {
             "status": "ok",
@@ -121,12 +123,16 @@ class VoiceAssistant:
             "insight": insight,
         }
 
+
     def _extract_claim_id(self, query: str) -> Optional[str]:
         import re
         m = re.search(r"claim_id=([^\s]+)", query, re.IGNORECASE)
         if m:
             return m.group(1)
-        m = re.search(r"\b(claim_[a-zA-Z0-9_\-]+)\b", query, re.IGNORECASE)
+        # Tighten regex to avoid matching generic phrases like "claim_form_was_filed"
+        # Require it to end with digits, or have multiple underscores/hyphens.
+        # (Testing often uses claim_test_123 or claim_c1)
+        m = re.search(r"\b(claim_[a-zA-Z0-9_]*[0-9]+[a-zA-Z0-9_]*)\b", query, re.IGNORECASE)
         if m:
             return m.group(1)
         return None
@@ -144,11 +150,20 @@ class VoiceAssistant:
             }
         claim_id = self._extract_claim_id(query)
         if claim_id is None:
+            # Bug 4 fix: gracefully fall back to returning recent claim IDs
+            # rather than returning an error for a valid intent.
+            available_claims = []
+            if getattr(self.explainability_api, "claims_store", None):
+                for c in self.explainability_api.claims_store.iter_claims():
+                    if getattr(c, "user_id", None) == user_id:
+                        available_claims.append(getattr(c, "claim_id", str(c)))
+            
             return {
                 "status": "no_claim_id_in_query",
-                "error": True,
+                "error": False,  # It's a valid intent, just needs disambiguation
                 "intent": "explainability",
-                "detail": "Explainability subsystem connected. Provide a claim_id to explain.",
+                "detail": "Please specify which claim you want explained.",
+                "available_claims": available_claims[-5:],  # Return up to 5 most recent
             }
         return self.explainability_api.explain(claim_id, user_id)
 

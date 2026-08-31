@@ -141,18 +141,10 @@ class ClaimsEngineAdapter(ClaimsStoreProvider):
                     self._claim_statuses[cid] = st
 
     def _atomic_append(self, record: Dict) -> None:
-        """Write a single record atomically (tmp-file + os.replace)."""
+        """Append a single record safely (Bug 5 fix: true append mode)."""
         line = json.dumps({"schema_version": SCHEMA_VERSION, **record}) + "\n"
-        tmp = self.db_path + ".tmp"
-        # Read existing content
-        existing = ""
-        if os.path.exists(self.db_path):
-            with open(self.db_path, "r", encoding="utf-8") as f:
-                existing = f.read()
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.write(existing)
+        with open(self.db_path, "a", encoding="utf-8") as f:
             f.write(line)
-        os.replace(tmp, self.db_path)
 
     # ------------------------------------------------------------------
     # ClaimsStoreProvider interface

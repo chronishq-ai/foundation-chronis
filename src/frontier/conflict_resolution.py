@@ -159,6 +159,27 @@ class ConflictManager:
                 f"does not match caller '{user_id}'."
             )
 
+        # --- 3.5. Structural connection verification (Bug 6) ---
+        # The new belief must be structurally connected to the conflicted episode.
+        effective_prov = provenance_store if provenance_store is not None else self.provenance_store
+        if effective_prov is not None:
+            old_b1 = effective_prov._beliefs.get(conflict.belief_id_1)
+            old_b2 = effective_prov._beliefs.get(conflict.belief_id_2)
+            
+            old_inferences = set()
+            if old_b1 and getattr(old_b1, "source_inference_ids", None):
+                old_inferences.update(old_b1.source_inference_ids)
+            if old_b2 and getattr(old_b2, "source_inference_ids", None):
+                old_inferences.update(old_b2.source_inference_ids)
+                
+            new_inferences = set(getattr(new_belief, "source_inference_ids", []) or [])
+            
+            if old_inferences and new_inferences and not old_inferences.intersection(new_inferences):
+                raise ValueError(
+                    f"New belief '{new_belief.id}' is not structurally connected "
+                    f"to conflicted episode (no shared source inferences)."
+                )
+
         # --- 4. Idempotency ---
         if conflict.resolved and conflict.resolution_belief_id == new_belief.id:
             return self._resolution_records[conflict_id]

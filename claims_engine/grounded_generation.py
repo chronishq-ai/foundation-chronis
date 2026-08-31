@@ -16,7 +16,7 @@ module never imports or calls a third-party API client itself.
 
 from __future__ import annotations
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Protocol, Sequence
 import re
 import uuid
@@ -63,7 +63,7 @@ class GeneratedInsight:
     citation_chain: Sequence[CitationChainEntry]
     routed_to_human_review: bool
     human_review_reason: Optional[str]
-    generated_at: datetime = field(default_factory=datetime.utcnow)
+    generated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 def select_excerpts(candidates: Sequence[SessionExcerpt], n_supporting: int = 3) -> List[SessionExcerpt]:

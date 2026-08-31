@@ -464,7 +464,8 @@ def test_claims_no_pickle_in_store():
         )
         adapter.append_claim_version(claim.claim_id, claim)
 
-        content = open(db_path, "r", encoding="utf-8").read()
+        with open(db_path, "r", encoding="utf-8") as f:
+            content = f.read()
         assert "pickle" not in content.lower()
         # base64 strings (gAAS... pattern) shouldn't appear
         assert "gAAS" not in content
