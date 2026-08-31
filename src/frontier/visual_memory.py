@@ -3,6 +3,8 @@ import numpy as np
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 
+from .interfaces.encoder import VisualEncoderMetadata, BLOCKED_ENCODER_METADATA
+
 try:
     import faiss
     HAS_FAISS = True
@@ -27,19 +29,57 @@ class MockFAISS:
         return np.array([[0.1]]), np.array([[0]])
 
 class SelfHostedCLIPEncoder:
-    """Mock for the self-hosted CLIP-class vision-language encoder."""
+    """Mock for the self-hosted CLIP-class vision-language encoder.
+
+    S1720.8 / R2-F20.5 STATUS: BLOCKED
+    This class is a placeholder. It returns random vectors and CANNOT satisfy
+    the audit's Recall@1/Recall@5 requirements. A real self-hosted CLIP-class
+    encoder must be installed before this ticket can be closed.
+    Do NOT replace this with a hash encoder -- that would still not provide
+    semantic visual representation.
+    """
+    ENCODER_MODEL_ID = "self-hosted-clip-BLOCKED"
+    ENCODER_VERSION = 0   # 0 = placeholder / not yet real
+
     def __init__(self):
         self.dimension = 512
 
     def encode(self, frame_data: Any) -> np.ndarray:
-        # Return a dummy random vector
+        # Returns random vectors -- non-deterministic, non-semantic.
+        # This is intentionally kept visible as a bug until replaced.
         return np.random.rand(self.dimension).astype('float32')
+
+
+class DeterministicTestEncoder:
+    """
+    Deterministic encoder for ISOLATED UNIT TESTS ONLY.
+
+    Uses SHA-256 of the input's string representation to produce a stable
+    float32 vector.  This is NOT a semantic encoder -- it has no concept of
+    visual similarity.  It is provided solely so that tests that need
+    deterministic embeddings (e.g. deletion tests, metadata tests) can run
+    without the real CLIP model.
+
+    NEVER use this in production or in any test that measures retrieval quality.
+    """
+    ENCODER_MODEL_ID = "deterministic-test-encoder-v1"
+    ENCODER_VERSION = 1
+
+    def __init__(self, dimension: int = 512):
+        self.dimension = dimension
+
+    def encode(self, frame_data: Any) -> np.ndarray:
+        import hashlib
+        h = hashlib.sha256(str(frame_data).encode("utf-8")).digest()
+        rng = np.random.default_rng(seed=int.from_bytes(h[:8], "big"))
+        return rng.random(self.dimension).astype("float32")
+
 
 class VisualMemoryIndex:
     """
     Per-user visual/episodic memory index.
     """
-    def __init__(self, user_id: str, encoder: SelfHostedCLIPEncoder, index_override=None):
+    def __init__(self, user_id: str, encoder, index_override=None):
         self.user_id = user_id
         self.encoder = encoder
         
@@ -61,6 +101,8 @@ class VisualMemoryIndex:
     def process_and_store(self, cse_frames: List[Dict[str, Any]]):
         """
         Processes CSE frames, running the encoder and storing in the index.
+        Each entry carries user_id, embedding_version, encoder_model_id
+        for ownership and version isolation (S1720.8).
         """
         for frame in cse_frames:
             salience = frame.get("salience_level", "L0")
@@ -72,7 +114,11 @@ class VisualMemoryIndex:
                     "timestamp_ntp": frame.get("timestamp_ntp"),
                     "salience_level": salience,
                     "gps_if_present": frame.get("gps_if_present"),
-                    "cse_inputs": frame.get("cse_inputs")
+                    "cse_inputs": frame.get("cse_inputs"),
+                    # Required metadata fields (S1720.8)
+                    "user_id": self.user_id,
+                    "embedding_version": getattr(self.encoder, "ENCODER_VERSION", 0),
+                    "encoder_model_id": getattr(self.encoder, "ENCODER_MODEL_ID", "unknown"),
                 }
                 
                 self.index.add(np.expand_dims(embedding, axis=0))

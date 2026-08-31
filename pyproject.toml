@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "foundation-chronis"
+version = "0.1.0"
+requires-python = ">=3.10"
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+# Root-level packages (claims_engine, divergence_engine, alignment, etc.)
+# are discovered from "." by default.
+# Packages under src/ (frontier) are discovered by adding "src" to where.
+where = [".", "src"]
+# Exclude cache / build artifacts
+exclude = ["*.egg-info", "build", "dist", "__pycache__"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: large property/benchmark tests, opt-in via pytest -m slow",
+]
