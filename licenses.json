@@ -1,0 +1,7 @@
+[
+  {"name": "numpy",        "version": "1.26.4",  "license": "BSD-3-Clause"},
+  {"name": "scipy",        "version": "1.13.1",  "license": "BSD-3-Clause"},
+  {"name": "mlflow",       "version": "2.14.3",  "license": "Apache-2.0"},
+  {"name": "pytest",       "version": "8.3.2",   "license": "MIT"},
+  {"name": "python-dotenv","version": "1.0.1",   "license": "BSD-3-Clause"}
+]
