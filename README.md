@@ -1,480 +1,199 @@
-# HARDENERS (this branch)
-Sprint 13: per-user model isolation  
-Sprint 14: policy engine + gated ML I/O + TILES e2e  
-Sprint 15: observer-effect flags — mitigates MP-13, does **not** close it  
-Observer-effect writeup lives in `observer_effect/README.md`, not this file.
+# Chronis Foundation — Hardener Branch (Sprints 13–15)
+
+> **Branch:** `hridhani/hardener-sprint-13-15`  
+> **Scope:** Per-User Model Isolation · Constitutional Policy Engine · Observer-Effect Safeguard
+
 ---
-# Chronis Foundation
+
 ## Overview
-Chronis Foundation is the core foundation layer for the Chronis system.
-The project provides a structured pipeline for processing raw user and sensor data into cleaned, normalized, extracted, temporally aligned, and stored features.
-The current implementation focuses on building a reliable foundation for:
-* Data preprocessing
-* Feature extraction
-* Temporal feature alignment
-* PostgreSQL-based feature storage
-* ML experiment tracking
-* End-to-end pipeline validation
-* Automated testing
-The architecture is designed to evolve toward a larger production-oriented feature and intelligence platform.
+
+This branch delivers three consecutive hardening sprints on top of the Chronis AI foundation pipeline. Each sprint adds a distinct security and correctness layer — they are designed to compose, not replace, prior sprint deliverables.
+
+| Sprint | Focus | Key Deliverable |
+|--------|-------|-----------------|
+| **13** | Per-User Model Isolation | `chronis_ml/` — isolated adapters, IsolationError guardrail, MLflow-gated registry |
+| **14** | Constitutional Policy Engine | `policy_engine/` + `integration/` — single choke-point authorization, audit-once guarantee |
+| **15** | Observer-Effect Safeguard | `observer_effect/` — 30-day surfacing index, aspiration evidence zero-out at read time |
+
 ---
-## Architecture
-The current processing pipeline follows this flow:
-```text
-Raw Input
-    |
-    v
-+----------------------+
-| Data Cleaning        |
-| preprocessing/       |
-+----------------------+
-    |
-    v
-+----------------------+
-| Feature Normalization|
-| preprocessing/       |
-+----------------------+
-    |
-    v
-+----------------------+
-| Feature Extraction   |
-| features/            |
-+----------------------+
-    |
-    v
-+----------------------+
-| Temporal Alignment   |
-| alignment/           |
-+----------------------+
-    |
-    v
-+----------------------+
-| Feature Store        |
-| PostgreSQL           |
-+----------------------+
-    |
-    v
-+----------------------+
-| ML Experiment        |
-| Tracking             |
-+----------------------+
-Repository Structure
-chronis-foundation/
+
+## Repository Structure
+
+```
+foundation-chronis-hridhani-hardener-sprint-13-15/
 │
-├── alignment/
-│   └── temporal_alignment.py
+├── chronis_ml/                  # Sprint 13 — Per-user model store & fine-tune stubs
+│   ├── store.py                 # IsolatedModelStore — raises IsolationError on cross-user writes
+│   ├── train.py                 # Personal LM fine-tune harness (base-checkpoint enforced)
+│   └── ops.py                   # MLflow registry ops with gated validation
 │
-├── feature_store/
-│   ├── database.py
-│   ├── queries.py
-│   └── schema.sql
+├── policy_engine/               # Sprint 14 — Constitutional layer (single choke point)
+│   ├── consent.py               # ConsentRecord, ConsentTier enum, check_inference_consent()
+│   ├── policy_rule.py           # PolicyRule — min_consent_tier NOW enforced in covers()
+│   ├── principal.py             # ModelPrincipal.check() — audit-once, raise-on-deny
+│   ├── audit_log.py             # Append-only, hash-chained audit log
+│   └── errors.py                # ConsentTierError, ModeCBlocked, PolicyDenied hierarchy
 │
-├── features/
-│   └── feature_pipeline.py
+├── integration/                 # Sprint 14 — Gated ML I/O wrappers
+│   ├── gated_store.py           # GatedModelStore — routes all reads/writes through principal
+│   ├── gated_registry.py        # GatedRegistry — REGISTRY_REGISTER requires explicit rule
+│   ├── gated_claims.py          # evaluate_claim_access() — constitutional claim surfacing
+│   └── gated_divergence.py      # gated_compute_divergence_state() — gated divergence engine
 │
-├── preprocessing/
-│   ├── cleaner.py
-│   ├── normalizer.py
-│   └── validator.py
+├── e2e/                         # Sprint 14 — End-to-end TILES pipeline runner
+│   ├── pipeline_runner.py       # Stage orchestrator (MP-18 pre-gate gap documented)
+│   ├── tiles_loader.py          # TILES feature matrix loader (post-NaN-handling entry point)
+│   └── timing.py                # Pipeline timing and stage-count metrics
 │
-├── tracking/
-│   └── mlflow_tracker.py
+├── observer_effect/             # Sprint 15 — Observer-effect mitigation
+│   ├── index.py                 # SurfacingIndex — 30-day inclusive window, would_flag()
+│   ├── safeguard.py             # aspiration_evidence_weight() — zeros flagged evidence at read
+│   ├── observer.py              # Observer coordinating module
+│   ├── profiles.py              # Validation harness — routes through real pipeline (NOT toy sim)
+│   ├── regression.py            # Regression suite for observer-effect invariants
+│   └── README.md                # Observer-effect design writeup
 │
-├── tests/
-│   ├── test_alignment.py
-│   ├── test_feature_store.py
-│   ├── test_features.py
-│   ├── test_integration.py
-│   ├── test_mlflow.py
-│   └── test_preprocessing.py
+├── tests/                       # Full regression & boundary test suite
+│   ├── test_policy_boundary_cases.py   # 100+ parametrized policy-boundary cases (incl. T1/T2/T3)
+│   ├── test_audit_tamper.py            # Append-only + hash-chain tamper resistance
+│   ├── test_e2e_pipeline.py            # End-to-end pipeline + MP-18 known-gap documentation
+│   ├── test_consent_tier_gate.py       # ConsentTier floor enforcement
+│   ├── test_mode_c_block.py            # Mode C hard-block (construction-time, not runtime)
+│   ├── test_g1_g4_review.py            # G1–G4 structural review
+│   └── test_sprint13.py / test_sprint15.py
 │
-├── requirements.txt
-└── README.md
-Core Components
-1. Data Preprocessing
-The preprocessing layer prepares incoming records before they are passed to downstream components.
+├── docs/
+│   └── g1_g4_signoff.md        # G1–G4 production-readiness sign-off (named owner, dated)
+│
+├── mp_registry.json             # Master Problem Registry — MP-13 and MP-18 with owners
+├── upstream_interfaces.py       # Dataclass contracts (AttractorRecord, Domain) for pipeline
+├── requirements.txt             # Pinned dependencies
+├── licenses.json                # License manifest for all pinned dependencies
+└── pytest.ini                   # Test discovery configuration
+```
 
-Responsibilities
-Validate incoming records
-Clean input data
-Handle invalid or missing data
-Normalize feature values
-Prepare structured data for feature extraction
-Files
-preprocessing/
-├── cleaner.py
-├── normalizer.py
-└── validator.py
-2. Feature Extraction
-The feature extraction layer converts processed sensor and input data into useful numerical features.
+---
 
-The current feature pipeline supports inputs such as:
+## Sprint 13 — Per-User Model Isolation
 
-IMU data
-Heart-rate measurements
-Audio-related information
-Example feature categories include:
+**Goal:** Every personal adapter is isolated to its owner. No cross-user read or write is possible through normal code paths.
 
-Movement
-Heart Rate
-Speech Activity
-Audio Energy
-Pause Information
-The extracted features can then be passed to the temporal alignment layer and eventually stored in the feature store.
+### Key Design Decisions
 
-File
-features/feature_pipeline.py
-3. Temporal Alignment
-Chronis processes information originating from different sources.
+- `IsolatedModelStore` raises `IsolationError` immediately if a caller attempts to write an adapter to a path that doesn't belong to them — checked by path ownership, not by caller-supplied boolean.
+- `promote_to_global()` unconditionally raises — sharing is architecturally impossible, not just policy-blocked.
+- `train.py` enforces a shared `chronis-base-v1` checkpoint via `ensure_base()` before every per-user fine-tune.
 
-These sources may produce observations at different timestamps or intervals.
+> **Known open item (S13.1):** `train.py` uses a hashed-vector adapter as a stand-in. Real LoRA/PEFT implementation is marked open and requires Senior ML Lead approval before any fine-tune logic changes.
 
-The temporal alignment layer provides a common representation so that downstream processing can work with temporally aligned data.
+---
 
-File
-alignment/temporal_alignment.py
-The current implementation includes automated tests covering temporal alignment behavior.
+## Sprint 14 — Constitutional Policy Engine
 
-4. Feature Store
-The feature store provides persistent storage for processed Chronis features.
+**Goal:** Route every ML data read/write through a single authorization choke point. No bypass path exists, including for legitimate-seeming retries.
 
-The current backend is:
+### Key Design Decisions
 
-PostgreSQL
-The database schema is designed with future TimescaleDB support in mind.
+- `ModelPrincipal.check()` is the **only** entry point. It either returns `None` (granted) or raises `PolicyDenied` (or a subclass). Every code path — success or denial — produces **exactly one audit entry** before returning.
+- `PolicyRule.min_consent_tier` is now **actively enforced** in `covers()` against the requester's actual consent tier (audit finding S14.1 fix).
+- Mode C (`OperationalMode.MODE_C`) is rejected at rule **construction time** in `__post_init__` — it cannot appear in `allowed_modes` for any rule, making it structurally impossible to grant.
+- The audit log is append-only and hash-chained (`audit_log.py`) — no `update`, `edit`, `delete`, or `purge` methods exist.
 
-Feature Table
-The primary table is:
+### Running the Policy Boundary Tests
 
-features
-Column	Type	Description
-id
-SERIAL
-Primary key
-user_id
-VARCHAR(100)
-User identifier
-timestamp
-TIMESTAMP
-Feature timestamp
-feature_name
-VARCHAR(100)
-Name of the feature
-feature_value
-DOUBLE PRECISION
-Numerical feature value
-created_at
-TIMESTAMP
-Record creation timestamp
-Database Index
-An index is created on:
+```bash
+python -m pytest tests/test_policy_boundary_cases.py -v
+```
 
-(user_id, timestamp)
-This supports efficient queries involving:
+> Requires the legacy upstream packages (`claims_engine`, `divergence_engine`) from Sprints 7–9. Without them, test collection will fail at import — this accurately reflects the codebase's dependency state.
 
-A specific user
-Time-range feature retrieval
-PostgreSQL Configuration
-The application reads database configuration from environment variables.
+### Known Open Item — MP-18
 
-Example:
+HSSM fit and attractor detection (Stages 2–3 of `e2e/pipeline_runner.py`) run **before** any `ModelPrincipal.check()` call. This pre-gate compute gap is documented in `test_e2e_pipeline.py::test_KNOWN_GAP_hssm_and_attractor_stages_run_before_any_gate_check` and tracked in `mp_registry.json`. **Owner: Senior ML Lead.**
 
-CHRONIS_DB_HOST=localhost
-CHRONIS_DB_PORT=5432
-CHRONIS_DB_NAME=chronis
-CHRONIS_DB_USER=postgres
-CHRONIS_DB_PASSWORD=<your-password>
-The password should be stored locally in .env and must not be committed to Git.
+---
 
-PostgreSQL Setup
-1. Install PostgreSQL
-Install PostgreSQL locally and make sure the PostgreSQL service is running.
+## Sprint 15 — Observer-Effect Safeguard
 
-Verify that PostgreSQL is available:
+**Goal:** Mitigate the observer effect — the risk that surfacing a divergence claim to a user changes the very behavioral patterns the claim was derived from.
 
-psql --version
-2. Create the Database
-Connect to PostgreSQL:
+### Key Design Decisions
 
-psql -h localhost -p 5432 -U postgres
-Create the Chronis database:
+- `SurfacingIndex.would_flag()` implements a **30-day inclusive window** (day+15 flagged, day+45 not flagged — verified against the worked example).
+- `aspiration_evidence_weight()` **zeros out flagged evidence at read time**, regardless of whether the caller remembered to set the flag — deliberately more robust than a caller-trusted boolean.
+- `product_copy()` is tested to **never leak** the internal flag name to user-facing text.
 
-CREATE DATABASE chronis;
-Connect to it:
+### Validation Harness
 
-\c chronis
-3. Create the Feature Table
-The schema is available in:
+`observer_effect/profiles.py` routes planted-profile trajectories through the
+**real package path**: `backbone.hssm.fit_hssm` → `nssm_pipeline.fit_nssm` →
+`divergence_engine.engine.compute_divergence_state` → `DivergenceState.type_scores`.
 
-feature_store/schema.sql
-The core table can be created with:
+Accuracy is measured end-to-end through that path. The Granger estimator behind
+the available divergence package remains **OLS-VAR-limited (S79.1 open)** —
+named explicitly in `mp_registry.json`, MLflow tags, and `KNOWN_LIMITATIONS.md`.
+This is **not** a claim that Bayesian MS-VAR is complete.
 
-CREATE TABLE IF NOT EXISTS features (
-    id SERIAL PRIMARY KEY,
-    user_id VARCHAR(100) NOT NULL,
-    timestamp TIMESTAMP NOT NULL,
-    feature_name VARCHAR(100) NOT NULL,
-    feature_value DOUBLE PRECISION,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-Create the performance index:
+The old hand-invented formula is quarantined in
+`observer_effect/scratch_type_scores.py` and is never used on the live scoring path.
 
-CREATE INDEX IF NOT EXISTS idx_features_user_timestamp
-ON features (user_id, timestamp);
-TimescaleDB Support
-The feature store schema has been prepared with future TimescaleDB support in mind.
+### Known Open Item — MP-13
 
-The schema provides the foundation for converting the features table into a TimescaleDB hypertable:
+The observer-effect mitigation is **permanently open by design** — mitigation is not closure. The surfacing index and evidence zeroing prevent the worst-case feedback loop, but the underlying measurement-affect-measurement dynamic cannot be fully resolved without architectural changes outside this sprint's scope.
 
-SELECT create_hypertable(
-    'features',
-    'timestamp',
-    if_not_exists => TRUE
-);
-This is optional and requires TimescaleDB to be installed and enabled.
+---
 
-The current implementation works with standard PostgreSQL.
+## G1–G4 Production-Readiness Sign-off
 
-Feature Store API
-The FeatureStore class provides the application-level interface to the PostgreSQL feature store.
+See [`docs/g1_g4_signoff.md`](docs/g1_g4_signoff.md) for the full review.
 
-Location
-feature_store/database.py
-Insert a Feature
-store.insert_feature(
-    "user_001",
-    "2026-08-16T10:00:00",
-    "heart_rate",
-    75
-)
-This creates a feature record containing:
+| Guarantee | Status | Owner |
+|-----------|--------|-------|
+| G1 — (text not located in uploaded materials) | UNVERIFIED | Senior ML Lead |
+| G2 — ML pipeline never writes back to Layer 0 | **PASS** (Sprint 14 scope) | Senior ML Lead |
+| G3 — NULL/missing states are typed, non-imputed | NOT INDEPENDENTLY VERIFIED (Sprint 1 scope) | Senior ML Lead |
+| G4 — No bypass path for any data-access grant | **PASS** (Sprint 14 scope) | Senior ML Lead |
 
-user_id       -> user_001
-timestamp     -> 2026-08-16T10:00:00
-feature_name  -> heart_rate
-feature_value -> 75
-Retrieve User Features
-store.get_features("user_001")
-The result is returned as a list of dictionaries:
+---
 
-[
-    {
-        "user_id": "user_001",
-        "timestamp": "2026-08-16T10:00:00",
-        "feature_name": "heart_rate",
-        "value": 75.0
-    }
-]
-Retrieve Features by Time Range
-store.get_features_by_time_range(
-    "user_001",
-    "2026-08-16T10:00:00",
-    "2026-08-16T11:00:00"
-)
-The time range is inclusive.
+## What This Branch Does NOT Implement
 
-For example:
+The following are explicitly **out of scope** for Sprints 13–15 and are documented here to prevent future confusion:
 
-10:00 -> included
-11:00 -> included
-12:00 -> excluded
-Validation
-The feature store validates important inputs before writing or querying data.
+- **Sprint 16:** Isolated microVM/gVisor processing container, Argon2id key derivation, VoicePrivacy EER unlinkability harness, bystander biometric TTL — confirmed absent, assigned as a separate senior-led ground-up build.
+- **Real LoRA/PEFT fine-tuning (S13.1):** `train.py` uses a hashed-vector adapter stand-in. Approved real PEFT implementation is a Senior ML Lead deliverable.
+- **Full Sprint 3/7/8 scientific remediations:** this zip includes wiring-compatible upstream packages so Sprint 14/15 tests install and run. S79.1 (Bayesian MS-VAR) and related research tickets remain owned by those teams.
 
-User ID
-An empty user_id is rejected.
+---
 
-ValueError
-Feature Name
-An empty feature name is rejected.
+## Running Tests
 
-ValueError
-Timestamp
-Timestamps must be ISO-8601 compatible.
-
-Example:
-
-2026-08-16T10:00:00
-Invalid timestamps are rejected.
-
-Time Range
-The start timestamp cannot occur after the end timestamp.
-
-For example, this is invalid:
-
-start = 12:00
-end   = 10:00
-ML Experiment Tracking
-The project includes an ML experiment tracking layer.
-
-File
-tracking/mlflow_tracker.py
-The tracking component provides an interface for recording experiment information such as:
-
-Experiment name
-Code/version identifier
-Parameters
-Metrics
-Example:
-
-tracker = MLflowTracker()
-tracker.log_experiment(
-    "pipeline_test",
-    "hash123",
-    {},
-    {
-        "accuracy": 0.9
-    }
-)
-Experiments can then be retrieved using the tracking interface.
-
-End-to-End Pipeline
-The project includes integration testing that validates the complete processing flow.
-
-The pipeline covers:
-
-Input Record
-     ↓
-Cleaning
-     ↓
-Normalization
-     ↓
-Feature Extraction
-     ↓
-Temporal Alignment
-     ↓
-Feature Store
-     ↓
-Experiment Tracking
-This ensures that individual components are tested independently while also verifying that they can work together as an end-to-end system.
-
-Testing
-The project uses pytest.
-
-Run the complete test suite:
-
-pytest
-The repository contains tests covering:
-
-Alignment
-Feature Store
-Feature Extraction
-Integration
-MLflow Tracking
-Preprocessing
-Test Validation
-All tests in the current repository should pass before submitting changes.
-
-Running the Project
-1. Clone the Repository
-git clone https://github.com/chronishq-ai/foundation-chronis.git
-Move into the project directory:
-
-cd foundation-chronis
-2. Install Dependencies
+```bash
+# Install dependencies
 pip install -r requirements.txt
-3. Configure Environment Variables
-Create a .env file in the project root.
 
-Example:
+# Run the full test suite (from this directory)
+python -m pytest tests/ -v
 
-CHRONIS_DB_HOST=localhost
-CHRONIS_DB_PORT=5432
-CHRONIS_DB_NAME=chronis
-CHRONIS_DB_USER=postgres
-CHRONIS_DB_PASSWORD=your_password
-Do not commit the .env file.
+# Run only the constitutional policy boundary cases (Sprint 14)
+python -m pytest tests/test_policy_boundary_cases.py -v
 
-4. Start PostgreSQL
-Make sure the PostgreSQL service is running.
+# Run only Sprint 15 (observer + S15.1 harness)
+python -m pytest tests/test_sprint15.py -v
+```
 
-pg_isready -h localhost -p 5432
-Expected result:
+See also `KNOWN_LIMITATIONS.md`.
 
-localhost:5432 - accepting connections
-5. Run Tests
-pytest
-All tests should pass before submitting changes.
+---
 
-Development Guidelines
-When modifying the project:
+## Dependencies
 
-Understand the existing implementation before making changes.
-Preserve existing public interfaces unless a change is required.
-Add tests for new behavior.
-Run the complete test suite before committing.
-Do not commit passwords, API keys, or .env files.
-Keep database-related configuration environment-based.
-Avoid unnecessary changes to unrelated components.
-Database Design
-The feature store follows a simple feature-event model:
+All dependencies are pinned in `requirements.txt` and cross-referenced in `licenses.json`. No dependency has an incompatible license for this project's usage pattern.
 
-User
- |
- +---- Feature Event
-          |
-          +---- Timestamp
-          +---- Feature Name
-          +---- Feature Value
-Performance Considerations
-The current database design includes an index on:
+---
 
-(user_id, timestamp)
-This is important because one of the primary access patterns is:
+## Scope Disclaimer
 
-Retrieve features for a user within a time range
-Error Handling
-The system performs validation at the application layer before database operations.
+This branch implements Sprint 13 (per-user model isolation) + Sprint 14 (constitutional policy engine, gated I/O, TILES e2e) + Sprint 15 (observer-effect safeguard).
 
-Examples of invalid input include:
-
-Empty user ID
-Empty feature name
-Invalid timestamp
-Invalid time range
-Invalid feature value type
-Missing database password
-These conditions raise appropriate Python exceptions rather than silently failing.
-
-Project Status
-Completed
-Data cleaning
-Data validation
-Feature normalization
-Feature extraction
-Temporal alignment
-PostgreSQL feature store
-Feature insertion
-Feature retrieval
-Time-range feature retrieval
-Feature-store validation
-PostgreSQL indexing
-ML experiment tracking
-End-to-end integration testing
-Automated test coverage for current modules
-PostgreSQL schema foundation
-TimescaleDB-ready schema foundation
-Security Notes
-Database credentials must not be hard-coded into source files.
-
-Use environment variables. Never commit:
-
-.env
-database passwords
-API keys
-private credentials
-access tokens
-Technology Stack
-Python
-PostgreSQL
-TimescaleDB-compatible schema
-pytest
-MLflow
-psycopg
-python-dotenv
-Git / GitHub
-Repository
-https://github.com/chronishq-ai/foundation-chronis
-
-License
-This project is currently maintained as part of the Chronis Foundation development work.
+It does **not** implement the isolated processing container (microVM/gVisor, 24h session-key TTL, RAM zero-fill) — that is Sprint 16 (Bible 5.24).

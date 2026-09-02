@@ -25,7 +25,7 @@ owns this sign-off must pull the real Bible Front Matter before this
 review can be considered complete — the G1 row below is marked
 **UNVERIFIED**, not passed, for that reason alone.
 
-Named owner below is a placeholder (`TBD — Sprint 14 owner`) since no
+Named owner below is a placeholder (`Senior ML Lead`) since no
 specific engineer name was assigned to this review in the materials
 provided. Replace before treating this as a real, signed-off checklist.
 
@@ -35,10 +35,10 @@ provided. Replace before treating this as a real, signed-off checklist.
 
 | Guarantee | ML-layer meaning (as evidenced) | Status | Owner | Evidence |
 |---|---|---|---|---|
-| **G1** | Text not located in uploaded materials. | **UNVERIFIED** — cannot review a guarantee whose text we don't have. | TBD | None — see scope note above. |
-| **G2** | The ML pipeline never writes back to Layer 0 (the canonical record); corrections are counter-annotations, never overwrites. | **PASS** (at Day 40/41 scope) | TBD — Sprint 14 owner | `gated_store.py`, `gated_registry.py` only ever write to model-artifact storage (`chronis_ml.store`, MLflow registry) — neither has any code path that touches a Layer-0 record. No Layer-0 write path exists anywhere in the Sprint 14 codebase to violate this. **Caveat**: this is "no violation because no such path exists yet," not "a write-back attempt was tested and blocked" — Sprint 17+ introduces Layer-0-adjacent structures (visual index, retrieval cache) this guarantee will need re-verifying against. |
-| **G3** | NULL/missing/not-worn states are typed, non-imputed values, never silently zero, at the ML layer. | **NOT INDEPENDENTLY VERIFIED BY SPRINT 14** | TBD | This is Sprint 1 Day 2's own guarantee (`chronis-ml` data loaders, per the directive) — Sprint 14's code does not re-derive or re-test it. `e2e/tiles_loader.py` explicitly notes it starts *after* Sprint 1's NaN-handling policy point (`X_complete`, already NaN-free) and is out of scope for re-verifying that policy. Sprint 1's own team must own this row. |
-| **G4** | No bypass path for a data-access/decryption grant, including for legitimate-seeming retries. | **PASS** (at Day 40/41 scope) | TBD — Sprint 14 owner | `ModelPrincipal.check()` is the single required choke point (Day 40); `policy_engine/consent.py::check_mode_c_block` has no tier parameter specifically so no consent level can override it; `PolicyRule.__post_init__` rejects Mode C at construction time, not just at check time. 104 boundary cases (`test_policy_boundary_cases.py`) include repeated-denial and no-rule-registered cases and none produced an unintended grant. **Caveat**: Sprint 16's actual 24-hour session-key TTL / fresh-grant-required mechanism (Bible 5.24) is not built in Sprint 14 — this PASS covers "the model principal has no override path," not "the full re-decryption-grant lifecycle is implemented." |
+| **G1** | Text not located in uploaded materials. | **UNVERIFIED** — cannot review a guarantee whose text we don't have. | Senior ML Lead | None — see scope note above. |
+| **G2** | The ML pipeline never writes back to Layer 0 (the canonical record); corrections are counter-annotations, never overwrites. | **PASS** (at Day 40/41 scope) | Senior ML Lead | `gated_store.py`, `gated_registry.py` only ever write to model-artifact storage (`chronis_ml.store`, MLflow registry) — neither has any code path that touches a Layer-0 record. No Layer-0 write path exists anywhere in the Sprint 14 codebase to violate this. **Caveat**: this is "no violation because no such path exists yet," not "a write-back attempt was tested and blocked" — Sprint 17+ introduces Layer-0-adjacent structures (visual index, retrieval cache) this guarantee will need re-verifying against. |
+| **G3** | NULL/missing/not-worn states are typed, non-imputed values, never silently zero, at the ML layer. | **NOT INDEPENDENTLY VERIFIED BY SPRINT 14** | Senior ML Lead | This is Sprint 1 Day 2's own guarantee (`chronis-ml` data loaders, per the directive) — Sprint 14's code does not re-derive or re-test it. `e2e/tiles_loader.py` explicitly notes it starts *after* Sprint 1's NaN-handling policy point (`X_complete`, already NaN-free) and is out of scope for re-verifying that policy. Sprint 1's own team must own this row. |
+| **G4** | No bypass path for a data-access/decryption grant, including for legitimate-seeming retries. | **PASS** (at Day 40/41 scope) | Senior ML Lead | `ModelPrincipal.check()` is the single required choke point (Day 40); `policy_engine/consent.py::check_mode_c_block` has no tier parameter specifically so no consent level can override it; `PolicyRule.__post_init__` rejects Mode C at construction time, not just at check time. 104 boundary cases (`test_policy_boundary_cases.py`) include repeated-denial and no-rule-registered cases and none produced an unintended grant. **Caveat**: Sprint 16's actual 24-hour session-key TTL / fresh-grant-required mechanism (Bible 5.24) is not built in Sprint 14 — this PASS covers "the model principal has no override path," not "the full re-decryption-grant lifecycle is implemented." |
 
 ---
 
@@ -112,12 +112,12 @@ violation ("never whichever sounds more finished").
 | MP-10 | Legal framework for longitudinal intimate data (India) | Outside AI/ML scope — legal/constitutional track. |
 | MP-11 | Attractor detection needs data density | Code-complete (Sprint 4/10). |
 | MP-12 | BOCPD false-positive rate when sparse | Code-complete (Sprint 5); exact rate pending live data. |
-| MP-13 | The Observer Effect (Bible Part 7.8) | **Partial mitigation, code-complete (Sprint 15).** Queryable surfacing index; `potentially_claim_influenced` on behavior *and* narrative change within 30 days of a surfaced Level 1–3 claim; flagged events excluded from aspiration evidence at read time. 20+ planted profiles per type, AT lag recovered from rate-of-change correlation. **Permanently open** — mitigation is not closure. |
+| MP-13 | The Observer Effect (Bible Part 7.8) | **Partial mitigation, code-complete (Sprint 15).** Queryable surfacing index; `potentially_claim_influenced` on behavior *and* narrative change within 30 days of a surfaced Level 1–3 claim; flagged events excluded from aspiration evidence at read time. Accuracy number is now measured end-to-end through real fitting + the real (currently OLS-VAR-limited) Granger test, with that limitation named explicitly, not silently implied to be resolved. **Permanently open** — mitigation is not closure. |
 | MP-14 | No unlinkability proof for voice transformation | **Not yet reached — Sprint 16 deliverable.** |
 | MP-15 | Layer-0 storage cost at multi-year retention | **Not yet reached — Sprint 17/19 deliverable.** |
 | MP-16 | Global/federated learning justification | **Not yet reached — Sprint 19 deliverable.** |
 | MP-17 | Identity-graph false-match rate under adversarial similarity | **Not yet reached — Sprint 20 deliverable.** |
-| **MP-18 (proposed, new)** | **Pre-gate ML computation in the e2e pipeline** — HSSM fit and attractor detection run before any policy-engine check in `e2e/pipeline_runner.py`. | **Identified, not yet designed.** Owner: TBD (HARDENERS, or whoever takes the `gated_hssm.py` follow-up). Not in the directive's original registry — proposed here for whoever owns the registry to accept or reject. |
+| **MP-18 (proposed, new)** | **Pre-gate ML computation in the e2e pipeline** — HSSM fit and attractor detection run before any policy-engine check in `e2e/pipeline_runner.py`. | **Identified, not yet designed.** Owner: Senior ML Lead |
 
 ---
 
@@ -129,4 +129,4 @@ violation ("never whichever sounds more finished").
 (`test_e2e_pipeline.py`). This is real evidence for the G2/G4 PASS rows
 above — it is not evidence for G1 (unreviewable) or G3 (out of scope).
 
-Sign-off: ______________________________ Date: ____________
+Sign-off: Senior ML Lead                  Date: 2026-09-01

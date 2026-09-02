@@ -83,6 +83,7 @@ class ModelPrincipal:
             if rule.covers(
                 action=request.action,
                 mode=request.consent.mode,
+                consent_tier=request.consent.tier,
                 claim_level=request.claim_level,
                 domain=request.domain,
                 at=request.at,

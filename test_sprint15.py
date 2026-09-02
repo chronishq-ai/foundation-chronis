@@ -78,12 +78,31 @@ def test_all_four_types_20plus_each_over_75(tmp_path: Path):
     profiles = plant_profiles(n_per_type=20, seed=7)
     counts = {t: sum(1 for p in profiles if p.label == t) for t in ("Ignorance", "Aspiration", "Self-Protection", "ActiveTransition")}
     assert all(n >= 20 for n in counts.values()), counts
+    # Every profile must carry DivergenceState.type_scores from the real engine.
+    assert all(p.scores is not None and len(p.scores) == 4 for p in profiles)
     acc = type_accuracy(profiles)
     for t, v in acc.items():
         assert v > 0.75, (t, v, acc)
     uri = (tmp_path / "mlruns").resolve().as_uri()
     run_id = log_accuracy_mlflow(acc, profiles, tracking_uri=uri)
     assert run_id
+
+
+def test_profiles_harness_imports_real_pipeline():
+    """Closure §14.1 T3 — harness must import the three production packages."""
+    import inspect
+    import observer_effect.profiles as profiles_mod
+
+    src = inspect.getsource(profiles_mod)
+    assert "import backbone.hssm" in src
+    assert "import nssm_pipeline" in src
+    assert "import divergence_engine.engine" in src
+    # Live path must not call the scratch formula for scoring.
+    plant_src = inspect.getsource(profiles_mod.plant_profiles)
+    assert "scratch_type_scores.type_scores" not in plant_src
+    assert "compute_divergence_state" in plant_src
+    assert "fit_hssm" in plant_src
+    assert "fit_nssm" in plant_src
 
 
 def test_at_lag_direction_recovered():
@@ -121,10 +140,20 @@ def test_mp13_mitigated_not_closed():
     text = p.read_text(encoding="utf-8")
     assert "MP-13" in text
     assert "permanently open" in text
+    assert "OLS-VAR" in text
     readme = Path(__file__).resolve().parents[1] / "observer_effect" / "README.md"
     body = readme.read_text(encoding="utf-8").lower()
     assert "mitigat" in body
-    assert "does not solve" in body
+    assert "not solve" in body
+    assert "ols-var" in body
+
+
+def test_mp18_tracked_with_owner():
+    p = Path(__file__).resolve().parents[1] / "mp_registry.json"
+    data = __import__("json").loads(p.read_text(encoding="utf-8"))
+    assert "MP-18" in data
+    assert data["MP-18"].get("owner")
+    assert "not closed" in data["MP-18"]["status"].lower() or "identified" in data["MP-18"]["status"].lower()
 
 
 def test_pipeline_logs_surfaced_claims_when_mirror_is_shown():

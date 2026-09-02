@@ -1,18 +1,29 @@
-# Day 44 — planted profiles + four type scores.
+# Day 44 / Sprint 15 — planted profiles through the REAL pipeline path.
 #
-# AT profiles have a weakening behavioral attractor AND a changing narrative
-# process (q_t / n_t stand-in), with a designed lag. Lag direction is recovered
-# from rate-of-change correlation of b_t and n_t.
+# Closure S15.1 (§14.1): planted b/n trajectories are turned into a synthetic
+# feature matrix, fitted via backbone.hssm + nssm_pipeline, then scored by
+# divergence_engine.engine.compute_divergence_state (real DivergenceState
+# type_scores). The old hand-rolled formula lives in scratch_type_scores.py
+# and must never be cited as validation evidence.
 #
-# All four types are planted 20+ each. Dominant type must clear >75%
-# independently. Ambiguous pairs (top-two scores within 0.15) are logged,
-# never forced — Sprint 8 residual-ambiguity rule.
+# Honesty: the Granger path behind the available divergence package remains
+# OLS-VAR-limited (S79.1 still open on the research track). Accuracy numbers
+# from this harness are end-to-end-through-available-packages numbers, not a
+# claim that Bayesian MS-VAR is complete.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Optional
 
 import numpy as np
+
+# T3 static check — these imports must remain (closure §14.1).
+import backbone.hssm  # noqa: F401
+import divergence_engine.engine  # noqa: F401
+import nssm_pipeline  # noqa: F401
+
+from .scratch_type_scores import recover_lag
 
 TYPES = ("Ignorance", "Aspiration", "Self-Protection", "ActiveTransition")
 AMBIGUITY_GAP = 0.15
@@ -34,59 +45,6 @@ class PlantedProfile:
     recovered_lag: int | None = None
 
 
-def recover_lag(b: np.ndarray, n: np.ndarray, max_lag: int = 12) -> tuple[int, float]:
-    # Narrative engagement rising as the attractor weakens → correlate -db with dn.
-    db = -np.diff(np.asarray(b, dtype=float))
-    dn = np.diff(np.asarray(n, dtype=float))
-    best_lag = 0
-    best = -1.0
-    for lag in range(-max_lag, max_lag + 1):
-        if lag < 0:
-            x, y = db[-lag:], dn[: len(dn) + lag]
-        elif lag > 0:
-            x, y = db[: len(db) - lag], dn[lag:]
-        else:
-            x, y = db, dn
-        if len(x) < 10:
-            continue
-        if np.std(x) < 1e-6 or np.std(y) < 1e-6:
-            continue
-        c = float(np.corrcoef(x, y)[0, 1])
-        if np.isnan(c):
-            continue
-        if c > best:
-            best, best_lag = c, lag
-    return best_lag, best
-
-
-def type_scores(b: np.ndarray, n: np.ndarray) -> dict[str, float]:
-    b = np.asarray(b, dtype=float)
-    n = np.asarray(n, dtype=float)
-    dn = np.diff(n)
-    b_mean = float(np.mean(b))
-    b_drop = float(np.clip(b[0] - b[-1], 0, 1))
-    b_var = float(np.std(b))
-    n_mean = float(np.mean(n))
-    n_end = float(n[-1])
-    n_rise = float(np.clip(n[-1] - n[0], 0, 1))
-    n_change = float(np.mean(np.abs(dn)))
-    lag, corr = recover_lag(b, n)
-
-    ignorance = b_mean * (1.0 - n_mean) * (1.0 - n_rise)
-    aspiration = b_drop * n_mean * (1.0 - n_rise)
-    self_prot = (1.0 - min(b_var * 6, 1.0)) * (1.0 - abs(n_mean - 0.35)) * (1.0 - n_rise)
-    lag_ok = 1.0 if lag >= 2 else 0.15
-    at = b_drop * n_rise * max(corr, 0.0) * lag_ok
-
-    raw = {
-        "Ignorance": ignorance,
-        "Aspiration": aspiration,
-        "Self-Protection": self_prot,
-        "ActiveTransition": at,
-    }
-    return {k: float(np.clip(v, 0, 1)) for k, v in raw.items()}
-
-
 def dominant_type(scores: dict[str, float]) -> tuple[Optional[str], bool]:
     ordered = sorted(scores.items(), key=lambda kv: kv[1], reverse=True)
     top, second = ordered[0], ordered[1]
@@ -96,6 +54,7 @@ def dominant_type(scores: dict[str, float]) -> tuple[Optional[str], bool]:
 
 
 def _series(kind: str, rng: np.random.Generator, lag: int = AT_LAG) -> tuple[np.ndarray, np.ndarray, int]:
+    """Plant structural raw trajectories (Sprint 8 Day 24 pattern shapes)."""
     t = np.arange(HORIZON, dtype=float)
     frac = t / (HORIZON - 1)
     noise_b = rng.normal(0, 0.02, HORIZON)
@@ -127,15 +86,48 @@ def _series(kind: str, rng: np.random.Generator, lag: int = AT_LAG) -> tuple[np.
 
 
 def plant_profiles(n_per_type: int = N_PER_TYPE, seed: int = 7) -> list[PlantedProfile]:
+    """Fit planted patterns through HSSM → NSSM → Divergence Engine."""
+    from backbone.hssm import fit_hssm
+    from divergence_engine.engine import DivergenceInputs, compute_divergence_state
+    from nssm_pipeline import fit_nssm
+
     rng = np.random.default_rng(seed)
     out: list[PlantedProfile] = []
     i = 0
+
     for label in TYPES:
         for _ in range(n_per_type):
             b, n, lag = _series(label, rng)
-            scores = type_scores(b, n)
-            pred, amb = dominant_type(scores)
-            rec_lag, _ = recover_lag(b, n)
+            raw_matrix = np.stack([b, n], axis=1)
+
+            hssm_out = fit_hssm(raw_matrix, random_seed=seed + i)
+            nssm_out = fit_nssm(raw_matrix, random_seed=seed + i)
+
+            weakening = bool((hssm_out.m_t[0] - hssm_out.m_t[-1]) > 0.15)
+            inputs = DivergenceInputs(
+                user_id=f"user_{i}",
+                domain_id="dom-synth",
+                window_start=datetime.now(timezone.utc),
+                window_end=datetime.now(timezone.utc),
+                p_t=hssm_out.p_t,
+                q_t=nssm_out.q_t,
+                m_t=hssm_out.m_t,
+                n_t=nssm_out.n_t,
+                behavioral_regime_id=1,
+                narrative_regime_id=1,
+                n_domain_pairs_tested=1,
+                behavioral_attractor_weakening=weakening,
+                narrative_conformal_confidence=0.8,
+            )
+            state = compute_divergence_state(inputs)
+            scores = dict(state.type_scores)
+            pred = state.dominant_type
+            amb = state.ambiguous
+            if pred is None and not amb:
+                pred, amb = dominant_type(scores)
+
+            recovered, _corr = recover_lag(hssm_out.m_t, nssm_out.n_t)
+
             out.append(
                 PlantedProfile(
                     profile_id=i,
@@ -146,7 +138,7 @@ def plant_profiles(n_per_type: int = N_PER_TYPE, seed: int = 7) -> list[PlantedP
                     scores=scores,
                     predicted=pred,
                     ambiguous=amb,
-                    recovered_lag=rec_lag,
+                    recovered_lag=int(recovered),
                 )
             )
             i += 1
@@ -183,5 +175,11 @@ def log_accuracy_mlflow(
             mlflow.log_metric(f"n_{t}", n)
         mlflow.log_metric("n_ambiguous", n_amb)
         mlflow.set_tag("sprint", "15")
-        mlflow.set_tag("note", "synthetic planted validation; not external validity")
+        mlflow.set_tag(
+            "note",
+            "end-to-end via backbone.hssm + nssm_pipeline + divergence_engine; "
+            "OLS-VAR-limited Granger (S79.1) — not Bayesian MS-VAR; "
+            "synthetic planted validation, not external validity",
+        )
+        mlflow.set_tag("granger_status", "OLS-VAR-limited (S79.1 open)")
         return run.info.run_id

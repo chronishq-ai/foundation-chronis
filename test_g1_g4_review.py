@@ -167,7 +167,12 @@ class TestG4NoBypassOnRetry:
         # "at request time" (now) the rule is expired — a retry submitted
         # right now must not be evaluated against the earlier, still-valid
         # window.
-        assert not rule.covers(action=RuleAction.CLAIM_ACCESS, mode=OperationalMode.MODE_A, at=now)
+        assert not rule.covers(
+            action=RuleAction.CLAIM_ACCESS,
+            mode=OperationalMode.MODE_A,
+            consent_tier=ConsentTier.INFERENCE,
+            at=now,
+        )
 
     def test_mismatched_identity_retry_never_falls_back_to_a_valid_rule(self):
         """A 'retry' that resubmits under a different (mismatched)

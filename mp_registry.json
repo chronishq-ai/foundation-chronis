@@ -2,10 +2,11 @@
   "note": "Sprint 15 observer-effect flags are a mitigation. MP-13 stays permanently open by design.",
   "MP-13": {
     "name": "Observer Effect",
-    "status": "partial mitigation, code-complete, permanently open by design, not a target for future closure; extended to narrative regime shifts"
+    "status": "partial mitigation, code-complete, permanently open by design, not a target for future closure; extended to narrative regime shifts. Accuracy number is now measured end-to-end through real fitting + the real (currently OLS-VAR-limited) Granger test."
   },
   "MP-18": {
     "name": "Pre-gate HSSM/attractor compute in e2e pipeline",
-    "status": "identified in Sprint 14; not closed in Sprint 15"
+    "status": "identified in Sprint 14; not closed in Sprint 15",
+    "owner": "Senior ML Lead"
   }
 }

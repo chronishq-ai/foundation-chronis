@@ -107,7 +107,7 @@ class PolicyRule:
             return True
         return at < self.expires_at
 
-    def covers(self, *, action: RuleAction, mode: OperationalMode, claim_level: Optional[int] = None,
+    def covers(self, *, action: RuleAction, mode: OperationalMode, consent_tier: ConsentTier, claim_level: Optional[int] = None,
                domain: Optional[str] = None, at: Optional[datetime] = None) -> bool:
         """True only if this single rule, on its own, would authorize the
         request. Combining multiple rules (e.g. "any matching rule grants")
@@ -115,6 +115,8 @@ class PolicyRule:
         if not self.is_active(at):
             return False
         if mode not in self.allowed_modes:
+            return False
+        if consent_tier < self.min_consent_tier:
             return False
         if not self.scope.allows_action(action):
             return False

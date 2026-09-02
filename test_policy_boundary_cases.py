@@ -416,7 +416,12 @@ def test_rule_active_before_expiry():
         expires_at=now + timedelta(hours=1),
         requires_renewal=True,
     )
-    assert rule.covers(action=RuleAction.CLAIM_ACCESS, mode=OperationalMode.MODE_A, at=now)
+    assert rule.covers(
+        action=RuleAction.CLAIM_ACCESS,
+        mode=OperationalMode.MODE_A,
+        consent_tier=ConsentTier.INFERENCE,
+        at=now,
+    )
 
 
 def test_rule_denied_after_expiry():
@@ -430,7 +435,12 @@ def test_rule_denied_after_expiry():
         expires_at=now - timedelta(hours=1),
         requires_renewal=True,
     )
-    assert not rule.covers(action=RuleAction.CLAIM_ACCESS, mode=OperationalMode.MODE_A, at=now)
+    assert not rule.covers(
+        action=RuleAction.CLAIM_ACCESS,
+        mode=OperationalMode.MODE_A,
+        consent_tier=ConsentTier.INFERENCE,
+        at=now,
+    )
 
 
 # ===========================================================================
@@ -476,3 +486,56 @@ def test_mode_c_rejected_at_rule_construction():
             allowed_modes=frozenset({OperationalMode.MODE_C}),
             granted_at=datetime.now(timezone.utc),
         )
+
+
+# ===========================================================================
+# PDF Audit 13.1 — PolicyRule.min_consent_tier enforcement tests
+# ===========================================================================
+
+def test_t1_strict_rule_blocks_lower_consent_requester():
+    """T1: Rule requires FULL, requester has INFERENCE. Must be denied."""
+    principal = ModelPrincipal()
+    rule = PolicyRule(
+        rule_id="strict-rule",
+        principal="system",
+        subject_user_id="u1",
+        scope=Scope(actions=frozenset({RuleAction.INFERENCE})),
+        min_consent_tier=ConsentTier.FULL,
+        allowed_modes=frozenset({OperationalMode.MODE_A}),
+        granted_at=datetime.now(timezone.utc)
+    )
+    principal.register_rule(rule)
+    consent = ConsentRecord("u1", ConsentTier.INFERENCE, OperationalMode.MODE_A)
+    req = AccessRequest(action=RuleAction.INFERENCE, consent=consent)
+    
+    with pytest.raises(PolicyDenied):
+        principal.check(req)
+
+
+def test_t2_strict_rule_allows_matching_consent_requester():
+    """T2: Rule requires FULL, requester has FULL. Must be granted."""
+    principal = ModelPrincipal()
+    rule = PolicyRule(
+        rule_id="strict-rule",
+        principal="system",
+        subject_user_id="u1",
+        scope=Scope(actions=frozenset({RuleAction.INFERENCE})),
+        min_consent_tier=ConsentTier.FULL,
+        allowed_modes=frozenset({OperationalMode.MODE_A}),
+        granted_at=datetime.now(timezone.utc)
+    )
+    principal.register_rule(rule)
+    consent = ConsentRecord("u1", ConsentTier.FULL, OperationalMode.MODE_A)
+    req = AccessRequest(action=RuleAction.INFERENCE, consent=consent)
+    
+    principal.check(req)  # Should not raise
+
+
+def test_t3_default_rule_preserves_existing_behavior(tmp_path):
+    """T3: Default rule (min_consent_tier=INFERENCE) must still pass existing logic."""
+    principal = ModelPrincipal()
+    principal.ensure_default_rule("u1")
+    consent = ConsentRecord("u1", ConsentTier.INFERENCE, OperationalMode.MODE_A)
+    req = AccessRequest(action=RuleAction.INFERENCE, consent=consent)
+    
+    principal.check(req)  # Should not raise

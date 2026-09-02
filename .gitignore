@@ -13,3 +13,7 @@ __pycache__/
 
 # MLflow artifacts
 mlruns/
+
+# Extracted PDF text dumps (scratch only, never commit)
+pdf_content.txt
+*.pdf_text.txt

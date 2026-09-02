@@ -12,7 +12,7 @@ from claims_engine.claim_levels import Claim, ClaimLevel
 from claims_engine.surfacing_policy import SurfaceDecision, SurfacingResult
 
 from .index import INFLUENCE_FLAG, INFLUENCE_WINDOW_DAYS, SurfacedClaim, SurfacingIndex
-from .profiles import TYPES, plant_profiles, type_accuracy, type_scores
+from .profiles import TYPES, plant_profiles, type_accuracy
 from .regression import cold_start_180, mirror_allowed, stage_for_sessions
 from .safeguard import Change, apply_influence_flag, aspiration_evidence_weight, product_copy
 
@@ -70,10 +70,45 @@ def cold_start_silent(stage: int, observer: Observer | None = None) -> bool:
 
 
 def classify(profile: dict) -> str:
-    """Back-compat for tiny dict profiles; Day 44 uses PlantedProfile + type_scores."""
+    """Back-compat for tiny dict profiles.
+
+    Structured b/n arrays go through the real planted-profile pipeline
+    (HSSM → NSSM → DivergenceState.type_scores). Scratch type_scores() is
+    never used on the live path (closure S15.1).
+    """
     if "b" in profile and "n" in profile:
-        scores = type_scores(profile["b"], profile["n"])
-        return max(scores, key=scores.get)
+        import numpy as np
+        from divergence_engine.engine import DivergenceInputs, compute_divergence_state
+        from backbone.hssm import fit_hssm
+        from nssm_pipeline import fit_nssm
+        from datetime import datetime, timezone
+
+        b = np.asarray(profile["b"], dtype=float)
+        n = np.asarray(profile["n"], dtype=float)
+        raw = np.stack([b, n], axis=1)
+        hssm_out = fit_hssm(raw)
+        nssm_out = fit_nssm(raw)
+        weakening = bool((hssm_out.m_t[0] - hssm_out.m_t[-1]) > 0.15)
+        state = compute_divergence_state(
+            DivergenceInputs(
+                user_id="classify",
+                domain_id="dom",
+                window_start=datetime.now(timezone.utc),
+                window_end=datetime.now(timezone.utc),
+                p_t=hssm_out.p_t,
+                q_t=nssm_out.q_t,
+                m_t=hssm_out.m_t,
+                n_t=nssm_out.n_t,
+                behavioral_regime_id=1,
+                narrative_regime_id=1,
+                n_domain_pairs_tested=1,
+                behavioral_attractor_weakening=weakening,
+                narrative_conformal_confidence=0.8,
+            )
+        )
+        if state.dominant_type:
+            return state.dominant_type
+        return max(state.type_scores, key=state.type_scores.get)
     b = profile.get("behavior")
     n = profile.get("narrative")
     lag = profile.get("lag", 0)
