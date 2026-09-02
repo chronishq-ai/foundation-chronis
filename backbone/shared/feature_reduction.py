@@ -279,7 +279,24 @@ def reduce_dimensionality(
     pca.fit(Z[complete_mask])
 
     Z_reduced = np.full((Z.shape[0], target_dims), np.nan)
-    Z_reduced[complete_mask] = pca.transform(Z[complete_mask])
+    V = pca.components_.T  # Shape (F, target_dims)
+
+    for i in range(Z.shape[0]):
+        obs_idx = ~np.isnan(Z[i])
+        if not np.any(obs_idx):
+            continue  # Entirely missing row remains NaN
+        
+        z_obs = Z[i, obs_idx]
+        V_obs = V[obs_idx, :]  # Loadings restricted to observed dimensions (|O_i|, target_dims)
+        
+        if len(z_obs) == Z.shape[1]:
+            # All features present: standard exact PCA transform
+            Z_reduced[i] = z_obs @ V
+        else:
+            # Partial missingness: exact least-squares projection using observed loadings V_obs
+            # Solves min || z_obs - score @ V_obs.T ||^2 without ANY zero/mean imputation
+            score, _, _, _ = np.linalg.lstsq(V_obs, z_obs, rcond=None)
+            Z_reduced[i] = score
 
     loadings = pd.DataFrame(
         pca.components_.T, index=feature_names,

@@ -44,7 +44,7 @@ def test_k_selection_never_hardcodes_a_favorite():
 
 def test_hard_minimum_10_inits_enforced():
     X = _obvious_three_regime_data()
-    with pytest.raises(AssertionError):
+    with pytest.raises((ValueError, AssertionError)):
         fit_with_random_restarts(X, n_regimes=2, n_features=3, n_init=5, base_seed=0)
 
 

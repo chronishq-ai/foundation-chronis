@@ -30,8 +30,30 @@ from __future__ import annotations
 import numpy as np
 from scipy.special import logsumexp
 from scipy.stats import lognorm
+from scipy.optimize import minimize
 
 NEG_INF = -1e10
+
+
+class HSSMError(Exception):
+    """Base exception class for HSSM errors."""
+    pass
+
+
+class NotFittedError(HSSMError, ValueError, AttributeError):
+    """Exception class to raise if estimator is used before fitting."""
+    pass
+
+
+class FittingConvergenceError(HSSMError, RuntimeError):
+    """Exception class to raise when EM fitting fails to converge across initializations."""
+    pass
+
+
+class InternalStateError(HSSMError, RuntimeError):
+    """Exception class to raise when an internal invariant or state assumption is violated."""
+    pass
+
 
 
 class GaussianHSMM:
@@ -57,18 +79,21 @@ class GaussianHSMM:
         self.converged_: bool = False
         self.n_iter_: int = 0
         self.convergence_rate_: float = 0.0
+        self.duration_unit: str = "sessions"
         self._is_fitted: bool = False
 
     def _require_fitted(self) -> None:
         if not getattr(self, "_is_fitted", False):
-            raise RuntimeError("Model has not been fitted yet — call .fit() first")
+            raise NotFittedError("Model has not been fitted yet — call .fit() first")
 
     # ---------- initialization ----------
 
     def _init_params(self, X: np.ndarray, mean_dwell_guess: float = 20.0) -> None:
         K, F = self.K, self.F
-        present = ~np.isnan(X).any(axis=1)
+        present = ~np.isnan(X).all(axis=1)
         Xp = X[present]
+        if len(Xp) == 0:
+            Xp = np.zeros((1, F))
 
         self.pi = np.full(K, 1.0 / K)
 
@@ -80,8 +105,19 @@ class GaussianHSMM:
                 self.A[k, j] = A_raw[k, idx] if K > 1 else 1.0
 
         chosen_idx = self.rng.choice(len(Xp), size=K, replace=len(Xp) < K)
-        self.mu = Xp[chosen_idx] + self.rng.normal(scale=0.3, size=(K, F))
-        self.var = np.full((K, F), np.nanvar(Xp, axis=0) + 1e-3)
+        mu_init = Xp[chosen_idx].copy()
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            feat_means = np.nanmean(X, axis=0)
+            feat_vars = np.nanvar(X, axis=0)
+        feat_means = np.nan_to_num(feat_means, nan=0.0)
+        feat_vars = np.nan_to_num(feat_vars, nan=1.0)
+        for r in range(K):
+            nan_feats = np.isnan(mu_init[r])
+            mu_init[r, nan_feats] = feat_means[nan_feats]
+        self.mu = mu_init + self.rng.normal(scale=0.3, size=(K, F))
+        self.var = np.full((K, F), feat_vars + 1e-3)
 
         # Scale mean_dwell_guess based on sequence length for faster convergence
         if mean_dwell_guess == 20.0:
@@ -93,7 +129,8 @@ class GaussianHSMM:
 
 
     def _duration_logpmf(self) -> np.ndarray:
-        assert self.dur_sigma is not None and self.dur_mu is not None
+        if self.dur_sigma is None or self.dur_mu is None:
+            raise NotFittedError("Duration parameters dur_sigma and dur_mu are not initialized")
         d = np.arange(1, self.Dmax + 1)
         logpmf = np.zeros((self.K, self.Dmax))
         for k in range(self.K):
@@ -104,16 +141,23 @@ class GaussianHSMM:
         return logpmf
 
     def _emission_loglik(self, X: np.ndarray) -> np.ndarray:
-        assert self.var is not None and self.mu is not None
+        if self.var is None or self.mu is None:
+            raise NotFittedError("Emission parameters var and mu are not initialized")
         T = X.shape[0]
         loglik = np.zeros((T, self.K))
-        missing = np.isnan(X).any(axis=1)
+        is_nan = np.isnan(X)
+        all_missing = is_nan.all(axis=1)
+        X_safe = np.where(is_nan, 0.0, X)
+
         for k in range(self.K):
             var = self.var[k]
-            diff = X - self.mu[k]
-            ll = -0.5 * np.sum(diff**2 / var + np.log(2 * np.pi * var), axis=1)
-            loglik[:, k] = ll
-        loglik[missing, :] = 0.0
+            mu = self.mu[k]
+            diff = X_safe - mu
+            dim_ll = -0.5 * (diff**2 / var + np.log(2 * np.pi * var))
+            dim_ll = np.where(is_nan, 0.0, dim_ll)
+            loglik[:, k] = dim_ll.sum(axis=1)
+
+        loglik[all_missing, :] = 0.0
         return loglik
 
     # ---------- forward-backward on expanded (k, d) state space ----------
@@ -125,7 +169,8 @@ class GaussianHSMM:
         computed EXACTLY from the expanded-state forward/backward quantities
         (this is the corrected replacement for the old co-occurrence proxy).
         """
-        assert self.A is not None and self.pi is not None
+        if self.A is None or self.pi is None:
+            raise NotFittedError("Parameters A and pi are not initialized")
         T, K, D = X.shape[0], self.K, self.Dmax
         emis = self._emission_loglik(X)
         dur_logpmf = self._duration_logpmf()
@@ -194,16 +239,45 @@ class GaussianHSMM:
 
         return regime_posterior, entry_posterior, xi_counts
 
+    @staticmethod
+    def _build_calendar_grid(X: np.ndarray, timestamps: np.ndarray) -> np.ndarray:
+        ts_arr = np.asarray(timestamps, dtype=float)
+        if len(ts_arr) != len(X):
+            raise ValueError(f"Timestamps length ({len(ts_arr)}) must match observations length ({len(X)})")
+
+        day_offsets = np.round(ts_arr - ts_arr[0]).astype(int)
+        if np.any(np.diff(day_offsets) < 0):
+            raise ValueError("Timestamps must be non-decreasing")
+
+        adjusted_offsets = day_offsets.copy()
+        for i in range(1, len(adjusted_offsets)):
+            if adjusted_offsets[i] <= adjusted_offsets[i - 1]:
+                adjusted_offsets[i] = adjusted_offsets[i - 1] + 1
+
+        total_days = adjusted_offsets[-1] + 1
+        F = X.shape[1]
+        X_grid = np.full((total_days, F), np.nan)
+        for i, offset in enumerate(adjusted_offsets):
+            X_grid[offset] = X[i]
+
+        return X_grid
+
     # ---------- EM ----------
 
-    def fit(self, X: np.ndarray, n_iter: int = 100, tol: float = 1e-4, verbose: bool = False) -> "GaussianHSMM":
-        self._init_params(X)
-        prev_ll = -np.inf
-        self.log_likelihood_history_ = []
+    def fit(self, X: np.ndarray, n_iter: int = 100, tol: float = 1e-4, verbose: bool = False, timestamps: np.ndarray | None = None) -> "GaussianHSMM":
+        if timestamps is not None:
+            X_fit = self._build_calendar_grid(X, timestamps)
+            self.duration_unit = "calendar_days"
+        else:
+            X_fit = X
+            self.duration_unit = "sessions"
 
+        self._init_params(X_fit)
+        prev_params = None
         for it in range(n_iter):
-            regime_post, entry_post, xi_counts = self._forward_backward(X)
-            assert self.log_likelihood_ is not None
+            regime_post, entry_post, xi_counts = self._forward_backward(X_fit)
+            if self.log_likelihood_ is None:
+                raise InternalStateError("Log likelihood is None after forward-backward step")
             ll = self.log_likelihood_
             self.log_likelihood_history_.append(ll)
 
@@ -216,13 +290,34 @@ class GaussianHSMM:
                 self._is_fitted = True
                 return self
 
-            if abs(ll - prev_ll) < tol:
+            if it > 0 and abs(ll - prev_ll) < tol:
                 self.converged_ = True
                 self.n_iter_ = it
                 break
-            prev_ll = ll
 
-            self._m_step(X, regime_post, entry_post, xi_counts)
+            if it > 0 and ll < prev_ll - 1e-4 and prev_params is not None:
+                print(
+                    f"[EM Monotonicity Guard] Violation at iteration {it}: "
+                    f"log-likelihood decreased from {prev_ll:.6f} to {ll:.6f} (delta = {ll - prev_ll:.6f}). "
+                    f"Rejecting update and restoring previous parameters."
+                )
+                self.pi, self.A, self.mu, self.var, self.dur_mu, self.dur_sigma = prev_params
+                self.log_likelihood_ = prev_ll
+                self.log_likelihood_history_[-1] = prev_ll
+                self.converged_ = True
+                self.n_iter_ = it
+                break
+
+            prev_params = (
+                self.pi.copy(),
+                self.A.copy(),
+                self.mu.copy(),
+                self.var.copy(),
+                self.dur_mu.copy(),
+                self.dur_sigma.copy(),
+            )
+            prev_ll = ll
+            self._m_step(X_fit, regime_post, entry_post, xi_counts)
         else:
             self.converged_ = False
             self.n_iter_ = n_iter
@@ -231,46 +326,63 @@ class GaussianHSMM:
         return self
 
     def _m_step(self, X: np.ndarray, regime_post: np.ndarray, entry_post: np.ndarray, xi_counts: np.ndarray) -> None:
-        assert self.mu is not None and self.var is not None and self.dur_mu is not None and self.dur_sigma is not None
+        if self.mu is None or self.var is None or self.dur_mu is None or self.dur_sigma is None:
+            raise NotFittedError("Parameters mu, var, dur_mu, or dur_sigma are not initialized")
         K, F = self.K, self.F
-        missing = np.isnan(X).any(axis=1)
-        present = ~missing
 
         self.pi = regime_post[0] / (regime_post[0].sum() + 1e-12)
 
         for k in range(K):
-            w = regime_post[present, k]
-            w_sum = w.sum() + 1e-12
-            mu_k = (w[:, None] * X[present]).sum(axis=0) / w_sum
-            var_k = (w[:, None] * (X[present] - mu_k) ** 2).sum(axis=0) / w_sum
-            self.mu[k] = mu_k
-            self.var[k] = np.clip(var_k, 1e-3, None)
+            for f in range(F):
+                feat_col = X[:, f]
+                obs_mask = ~np.isnan(feat_col)
+                if not np.any(obs_mask):
+                    continue
+                w_f = regime_post[obs_mask, k]
+                w_sum = w_f.sum() + 1e-12
+                mu_kf = (w_f * feat_col[obs_mask]).sum() / w_sum
+                var_kf = (w_f * (feat_col[obs_mask] - mu_kf) ** 2).sum() / w_sum
+                self.mu[k, f] = mu_kf
+                self.var[k, f] = max(var_kf, 1e-3)
 
-        # Duration params — weighted MLE of (truncated, discretized) log-normal from
-        # entry_post mass over d. NOTE: the closed-form weighted-MLE formula below
-        # is exact for an UNTRUNCATED log-normal; the model actually used in
-        # forward-backward is truncated to d=1..Dmax and renormalized, so this is
-        # an approximation. Confirmed via testing: this mismatch can cause tiny
-        # non-monotonic log-likelihood dips near convergence. Mitigated cheaply
-        # here with damping (blend 70% new / 30% old estimate) rather than the
-        # much more expensive per-iteration backtracking approach (which was
-        # tried and reverted — it made a single fit ~10x slower with 10 restarts,
-        # unacceptable for the harness). Damping is a known partial fix, not an
-        # exact one; increasing Dmax (see config.py) also reduces the truncation
-        # bias directly and is the more principled lever if this still surfaces
-        # on real data.
+        # Duration params — exact MLE of discrete-truncated log-normal PMF over d=1..Dmax.
+        # Account for the truncation normalization penalty Z(mu, sigma) = sum_{d=1}^Dmax pdf(d).
         d_vals = np.arange(1, self.Dmax + 1)
         log_d = np.log(d_vals)
-        DAMPING = 0.7
         for k in range(K):
             w = entry_post[:, k, :].sum(axis=0)
-            w_sum = w.sum() + 1e-12
-            mean_logd = (w * log_d).sum() / w_sum
-            var_logd = (w * (log_d - mean_logd) ** 2).sum() / w_sum
-            new_dur_mu_k = mean_logd
-            new_dur_sigma_k = np.sqrt(max(var_logd, 1e-3))
-            self.dur_mu[k] = DAMPING * new_dur_mu_k + (1 - DAMPING) * self.dur_mu[k]
-            self.dur_sigma[k] = DAMPING * new_dur_sigma_k + (1 - DAMPING) * self.dur_sigma[k]
+            w_sum = w.sum()
+            if w_sum <= 1e-12:
+                continue
+
+            # Initial un-truncated MLE estimate as starting point
+            init_mu = float((w * log_d).sum() / (w_sum + 1e-12))
+            init_var = float((w * (log_d - init_mu) ** 2).sum() / (w_sum + 1e-12))
+            init_sigma = float(np.sqrt(max(init_var, 1e-3)))
+
+            # Exact truncated objective: maximize sum(w * log(pmf))
+            def neg_target_loglik(params: np.ndarray) -> float:
+                m, s = params[0], max(params[1], 1e-3)
+                pdf = lognorm.pdf(d_vals, s=s, scale=np.exp(m))
+                pdf_sum = pdf.sum()
+                if pdf_sum <= 0.0 or np.isnan(pdf_sum):
+                    return 1e10
+                pmf = np.clip(pdf / pdf_sum, 1e-300, None)
+                return -float(np.sum(w * np.log(pmf)))
+
+            res = minimize(
+                neg_target_loglik,
+                x0=[init_mu, init_sigma],
+                method="L-BFGS-B",
+                bounds=[(None, None), (1e-3, 5.0)],
+                options={"maxiter": 5, "ftol": 1e-2},
+            )
+            if res.success:
+                self.dur_mu[k] = float(res.x[0])
+                self.dur_sigma[k] = float(res.x[1])
+            else:
+                self.dur_mu[k] = init_mu
+                self.dur_sigma[k] = init_sigma
 
         # CORRECTED: exact xi-based transition matrix update (was a co-occurrence proxy)
         row_sums = xi_counts.sum(axis=1, keepdims=True)
@@ -289,7 +401,8 @@ class GaussianHSMM:
 
     def bic(self, n_observations: int) -> float:
         self._require_fitted()
-        assert self.log_likelihood_ is not None
+        if self.log_likelihood_ is None:
+            raise NotFittedError("Log likelihood is None")
         return -2 * self.log_likelihood_ + self.n_params() * np.log(n_observations)
 
     def is_log_likelihood_monotonic(self, tol: float = 1e-6) -> bool:
@@ -303,31 +416,36 @@ class GaussianHSMM:
     @property
     def transition_matrix(self) -> np.ndarray:
         self._require_fitted()
-        assert self.A is not None
+        if self.A is None:
+            raise NotFittedError("Transition matrix A is None")
         return self.A
 
     @property
     def duration_mu(self) -> np.ndarray:
         self._require_fitted()
-        assert self.dur_mu is not None
+        if self.dur_mu is None:
+            raise NotFittedError("Duration mu is None")
         return self.dur_mu
 
     @property
     def duration_sigma(self) -> np.ndarray:
         self._require_fitted()
-        assert self.dur_sigma is not None
+        if self.dur_sigma is None:
+            raise NotFittedError("Duration sigma is None")
         return self.dur_sigma
 
     @property
     def emission_means(self) -> np.ndarray:
         self._require_fitted()
-        assert self.mu is not None
+        if self.mu is None:
+            raise NotFittedError("Emission means mu is None")
         return self.mu
 
     @property
     def emission_covariances(self) -> list[np.ndarray]:
         self._require_fitted()
-        assert self.var is not None
+        if self.var is None:
+            raise NotFittedError("Emission variances var is None")
         return [np.diag(v) for v in self.var]
 
     @property
@@ -345,7 +463,8 @@ class GaussianHSMM:
     def duration_probability(self, durations: list[int] | np.ndarray, regime_index: int) -> np.ndarray:
         """Compute the log-normal duration probability for a given regime."""
         self._require_fitted()
-        assert self.dur_mu is not None and self.dur_sigma is not None
+        if self.dur_mu is None or self.dur_sigma is None:
+            raise NotFittedError("Duration parameters dur_mu or dur_sigma are None")
         durations_arr = np.asarray(durations, dtype=float)
         mu = float(self.dur_mu[regime_index])
         sigma = float(self.dur_sigma[regime_index])
@@ -356,7 +475,8 @@ class GaussianHSMM:
     def generate_regime_sequence(self, length: int, initial_regime: int = 0) -> np.ndarray:
         """Generate a regime sequence respecting the duration prior and transitions."""
         self._require_fitted()
-        assert self.A is not None
+        if self.A is None:
+            raise NotFittedError("Transition matrix A is None")
         d_vals = np.arange(1, self.Dmax + 1)
         dur_logpmf = self._duration_logpmf()
         
@@ -425,7 +545,8 @@ class KimHSSMModel(GaussianHSMM):
     def transition_matrix(self) -> np.ndarray:
         """Dynamic mapping of HSMM transitions and durations back to an equivalent HMM transition matrix with self-loops."""
         self._require_fitted()
-        assert self.A is not None and self.dur_mu is not None and self.dur_sigma is not None
+        if self.A is None or self.dur_mu is None or self.dur_sigma is None:
+            raise NotFittedError("Parameters A, dur_mu, or dur_sigma are None")
         if np.allclose(np.diag(self.A), 0.0):
             expected_durations = np.exp(self.dur_mu + self.dur_sigma**2 / 2.0)
             expected_durations = np.clip(expected_durations, 1.0001, None)

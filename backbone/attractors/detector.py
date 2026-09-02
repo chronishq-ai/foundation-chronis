@@ -41,27 +41,47 @@ def compute_attractor_stats(
     if neighborhood_radius is None:
         neighborhood_radius = float(config.neighborhood_radius_multiplier * np.linalg.norm(np.std(m_sub, axis=0)))
 
-    dist_to_modal = np.linalg.norm(m_sub - modal_value, axis=1)
-    inside = dist_to_modal <= neighborhood_radius
+    # Run-length encode original time-ordered sequence to find contiguous runs of target_regime
+    T = len(regime_labels)
+    runs: list[tuple[int, int]] = []
+    in_target = False
+    start_i = 0
+    for i in range(T):
+        if regime_labels[i] == target_regime:
+            if not in_target:
+                in_target = True
+                start_i = i
+        else:
+            if in_target:
+                runs.append((start_i, i))
+                in_target = False
+    if in_target:
+        runs.append((start_i, T))
 
     revisit_count = 0
     dwell_times = []
     entry_exit_points = []
-    run_len = 0
-    for i, val in enumerate(inside):
-        if val:
-            if run_len == 0:
-                revisit_count += 1
-                entry_exit_points.append(m_sub[i])
-            run_len += 1
-        else:
-            if run_len > 0:
-                dwell_times.append(run_len)
-                entry_exit_points.append(m_sub[i - 1])
-            run_len = 0
-    if run_len > 0:
-        dwell_times.append(run_len)
-        entry_exit_points.append(m_sub[-1])
+
+    for start_idx, end_idx in runs:
+        m_run = m_t[start_idx:end_idx]
+        dist_to_modal = np.linalg.norm(m_run - modal_value, axis=1)
+        inside = dist_to_modal <= neighborhood_radius
+
+        run_len = 0
+        for i, val in enumerate(inside):
+            if val:
+                if run_len == 0:
+                    revisit_count += 1
+                    entry_exit_points.append(m_run[i])
+                run_len += 1
+            else:
+                if run_len > 0:
+                    dwell_times.append(run_len)
+                    entry_exit_points.append(m_run[i - 1])
+                run_len = 0
+        if run_len > 0:
+            dwell_times.append(run_len)
+            entry_exit_points.append(m_run[-1])
 
     mean_dwell_time = float(np.mean(dwell_times)) if dwell_times else 0.0
 
@@ -71,7 +91,8 @@ def compute_attractor_stats(
     else:
         transition_stability = np.inf
 
-    assert neighborhood_radius is not None
+    if neighborhood_radius is None:
+        raise ValueError("neighborhood_radius must not be None")
     return {
         "revisit_count": revisit_count,
         "mean_dwell_time": mean_dwell_time,

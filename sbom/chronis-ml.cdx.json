@@ -1,0 +1,222 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "components": [
+    {
+      "name": "numpy",
+      "version": "2.2.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "boundary",
+          "value": "true"
+        }
+      ],
+      "boundary": true
+    },
+    {
+      "name": "scipy",
+      "version": "1.15.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "boundary",
+          "value": "true"
+        }
+      ],
+      "boundary": true
+    },
+    {
+      "name": "mlflow",
+      "version": "2.20.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "boundary",
+          "value": "true"
+        }
+      ],
+      "boundary": true
+    },
+    {
+      "name": "statsmodels",
+      "version": "0.14.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "boundary",
+          "value": "true"
+        }
+      ],
+      "boundary": true
+    },
+    {
+      "name": "pytest",
+      "version": "8.3.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "boundary",
+          "value": "false"
+        }
+      ],
+      "boundary": false
+    },
+    {
+      "name": "pip-audit",
+      "version": "2.8.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "boundary",
+          "value": "false"
+        }
+      ],
+      "boundary": false
+    },
+    {
+      "name": "openai-whisper",
+      "version": "20231117",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "boundary",
+          "value": "true"
+        }
+      ],
+      "boundary": true
+    },
+    {
+      "name": "pyannote.audio",
+      "version": "3.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "boundary",
+          "value": "true"
+        }
+      ],
+      "boundary": true
+    },
+    {
+      "name": "opensmile",
+      "version": "2.5.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "audEERING-Research-License"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "boundary",
+          "value": "true"
+        }
+      ],
+      "boundary": true
+    },
+    {
+      "name": "hdbscan",
+      "version": "0.8.33",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "boundary",
+          "value": "true"
+        }
+      ],
+      "boundary": true
+    },
+    {
+      "name": "bertopic",
+      "version": "0.16.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "boundary",
+          "value": "true"
+        }
+      ],
+      "boundary": true
+    },
+    {
+      "name": "bocd",
+      "version": "0.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause"
+          }
+        }
+      ],
+      "properties": [
+        {
+          "name": "boundary",
+          "value": "true"
+        }
+      ],
+      "boundary": true
+    }
+  ]
+}

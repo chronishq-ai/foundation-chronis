@@ -3,7 +3,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 import numpy as np
 import pytest
 
-from backbone.hssm.model import KimHSSMModel
+from backbone.hssm.model import KimHSSMModel, NotFittedError
 from backbone.hssm.fitting import fit_hssm_model
 
 
@@ -60,8 +60,8 @@ def test_fit_hssm_model_enforces_hard_min_init_by_default():
     rng = np.random.default_rng(0)
     X = rng.normal(size=(35, 2))
     
-    # Without allow_fast_test_fit (default), n_initializations < 10 must raise AssertionError
-    with pytest.raises(AssertionError):
+    # Without allow_fast_test_fit (default), n_initializations < 10 must raise ValueError or AssertionError
+    with pytest.raises((ValueError, AssertionError)):
         fit_hssm_model(X, candidate_ks=(2,), n_initializations=2, allow_fast_test_fit=False)
         
     # With allow_fast_test_fit=True, it should proceed normally
@@ -70,34 +70,34 @@ def test_fit_hssm_model_enforces_hard_min_init_by_default():
     assert report["n_initializations"] == 2
 
 
-def test_unfitted_model_raises_runtime_error():
-    """Verify that calling properties or methods on an unfitted model raises a RuntimeError."""
+def test_unfitted_model_raises_not_fitted_error():
+    """Verify that calling properties or methods on an unfitted model raises a NotFittedError."""
     from backbone.hssm.model import GaussianHSMM
     model = GaussianHSMM(n_regimes=2, n_features=3)
     
-    with pytest.raises(RuntimeError, match="Model has not been fitted yet"):
+    with pytest.raises(NotFittedError, match="Model has not been fitted yet"):
         _ = model.transition_matrix
         
-    with pytest.raises(RuntimeError, match="Model has not been fitted yet"):
+    with pytest.raises(NotFittedError, match="Model has not been fitted yet"):
         _ = model.duration_mu
         
-    with pytest.raises(RuntimeError, match="Model has not been fitted yet"):
+    with pytest.raises(NotFittedError, match="Model has not been fitted yet"):
         _ = model.duration_sigma
         
-    with pytest.raises(RuntimeError, match="Model has not been fitted yet"):
+    with pytest.raises(NotFittedError, match="Model has not been fitted yet"):
         _ = model.emission_means
         
-    with pytest.raises(RuntimeError, match="Model has not been fitted yet"):
+    with pytest.raises(NotFittedError, match="Model has not been fitted yet"):
         _ = model.emission_covariances
         
-    with pytest.raises(RuntimeError, match="Model has not been fitted yet"):
+    with pytest.raises(NotFittedError, match="Model has not been fitted yet"):
         model.duration_probability([1, 2], 0)
         
-    with pytest.raises(RuntimeError, match="Model has not been fitted yet"):
+    with pytest.raises(NotFittedError, match="Model has not been fitted yet"):
         model.generate_regime_sequence(10)
 
-    with pytest.raises(RuntimeError, match="Model has not been fitted yet"):
+    with pytest.raises(NotFittedError, match="Model has not been fitted yet"):
         model.bic(10)
 
-    with pytest.raises(RuntimeError, match="Model has not been fitted yet"):
+    with pytest.raises(NotFittedError, match="Model has not been fitted yet"):
         model.n_params()

@@ -24,9 +24,12 @@ class ColdStartError(Exception):
 
 
 def count_present_sessions(X: np.ndarray) -> int:
-    """Count sessions with NO missing feature (a row is 'present' only if
-    every feature in it is non-NaN). Missingness cannot be used to pad the count."""
-    return int((~np.isnan(X).any(axis=1)).sum())
+    """Count eligible sessions using the confidence contract tiers (>= 50% feature presence).
+    Rows with >= 50% observed features (tiers 1.0, 0.75, 0.5) are eligible; tier < 0.5 is excluded."""
+    if X.size == 0 or X.ndim < 2 or X.shape[1] == 0:
+        return 0
+    obs_fraction = (~np.isnan(X)).sum(axis=1) / X.shape[1]
+    return int((obs_fraction >= 0.5).sum())
 
 
 def fit_hssm_gated(
@@ -38,9 +41,13 @@ def fit_hssm_gated(
     n_init: int = 10,
     max_duration: int = 45,
     base_seed: int = 0,
+    timestamps: np.ndarray | None = None,
 ):
     """Wraps fit_with_random_restarts with the cold-start gate. Raises
     ColdStartError below config.min_present_sessions; fits normally at/above it."""
+    if n_features <= 0 or (X.ndim >= 2 and X.shape[1] == 0):
+        raise ValueError("Feature count must be strictly greater than zero (F > 0)")
+
     if n_present_sessions is None:
         n_present_sessions = count_present_sessions(X)
 
@@ -54,5 +61,5 @@ def fit_hssm_gated(
 
     return fit_with_random_restarts(
         X, n_regimes=n_regimes, n_features=n_features, n_init=n_init,
-        max_duration=max_duration, base_seed=base_seed,
+        max_duration=max_duration, base_seed=base_seed, timestamps=timestamps,
     )

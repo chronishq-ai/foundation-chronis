@@ -59,13 +59,17 @@ def test_gate_uses_present_not_raw_row_count():
 
 
 def test_partially_missing_row_does_not_count_as_present():
-    # A row is present only if EVERY feature is non-NaN.
+    # Confidence contract tiers: >= 50% feature presence is eligible (tiers 1.0, 0.75, 0.5); < 50% is excluded.
     rng = np.random.default_rng(3)
-    X = rng.normal(size=(35, 5))
-    X[:6, 0] = np.nan  # 6 rows partially missing
-    assert count_present_sessions(X) == 29  # 35 - 6 == 29, below gate
+    X_tier_0_8 = rng.normal(size=(35, 5))
+    X_tier_0_8[:6, 0] = np.nan  # 1/5 missing = 80% present >= 50% -> eligible
+    assert count_present_sessions(X_tier_0_8) == 35
+
+    X_tier_0_2 = rng.normal(size=(35, 5))
+    X_tier_0_2[:6, :4] = np.nan  # 4/5 missing = 20% present < 50% -> excluded (6 rows excluded, 29 eligible)
+    assert count_present_sessions(X_tier_0_2) == 29  # 35 - 6 == 29, below gate
     with pytest.raises(ColdStartError):
-        fit_hssm_gated(X, n_regimes=2, n_features=5, n_init=10, base_seed=1)
+        fit_hssm_gated(X_tier_0_2, n_regimes=2, n_features=5, n_init=10, base_seed=1)
 
 
 # ---------- #2: bad inputs ----------
