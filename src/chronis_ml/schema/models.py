@@ -1,27 +1,21 @@
-"""Canonical Chronis data models.
-
-Dataset-specific loaders must convert their source data into these models.
-No dataset-specific parsing belongs in this module.
-"""
-
 from __future__ import annotations
 
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from chronis_ml.schema.classification import DataClassification
 
 
 class MeasurementStatus(StrEnum):
-    """Whether a measurement was observed or is missing."""
-
     OBSERVED = "observed"
     MISSING = "missing"
 
 
 class MissingReason(StrEnum):
-    """Typed reasons for a missing measurement."""
-
     SENSOR_FAILURE = "sensor_failure"
     NOT_WORN = "not_worn"
     AUDIO_PAUSED = "audio_paused"
@@ -29,35 +23,13 @@ class MissingReason(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class MissingnessSignals:
-    """Raw, dataset-agnostic signals used to classify *why* a reading is
-    missing, before a loader builds the final `FeatureRecord`.
-
-    This is intentionally separate from `FeatureRecord`: it is the input
-    to the S1.2 missing-reason decision table
-    (`chronis_ml.schema.validation.classify_missing_reason`), not the
-    canonical stored output. A loader that has access to these signals
-    should classify the reason before defaulting to SENSOR_FAILURE.
-
-    All fields default to False so a loader that only has partial signal
-    availability can populate just what it knows and leave the rest at
-    the conservative "no evidence of this" default.
-    """
-
     imu_stillness: bool = False
-    """True if the IMU shows no meaningful movement for the window."""
-
     ppg_dropout: bool = False
-    """True if the PPG (heart-rate) sensor produced no usable signal."""
-
     mic_off_event: bool = False
-    """True if a discrete microphone-off event was recorded for this
-    window (e.g. the participant explicitly paused audio capture)."""
 
 
 @dataclass(frozen=True, slots=True)
 class FeatureMetadata:
-    """Metadata describing one canonical feature."""
-
     name: str
     modality: str
     unit: str | None = None
@@ -67,8 +39,6 @@ class FeatureMetadata:
 
 @dataclass(frozen=True, slots=True)
 class FeatureRecord:
-    """One user/time/feature observation."""
-
     user_id: str
     timestamp: datetime
     feature_name: str
@@ -79,39 +49,33 @@ class FeatureRecord:
     unit: str | None = None
     source: str | None = None
     schema_version: str = "1.0"
-    """Schema version this record was constructed under. Validated
-    against `validation.SUPPORTED_SCHEMA_VERSIONS` — a record built
-    under an unrecognized version is an explicit incompatibility error,
-    never silently accepted (S1.3 requirement)."""
+    classification: DataClassification | None = None
+    """Optional T4A source/object-type/representation classification.
+    None by default (fully backward-compatible with every existing
+    record). When present, `DataClassification.__post_init__` has
+    already enforced structural validity — this field can never hold
+    an invalid classification."""
 
 
 @dataclass(frozen=True, slots=True)
 class ChronisDataset:
-    """Canonical dataset returned by a dataset loader."""
-
     records: tuple[FeatureRecord, ...]
     features: tuple[FeatureMetadata, ...] = field(default_factory=tuple)
 
     @classmethod
     def from_records(
-        cls,
-        records: Iterable[FeatureRecord],
-        features: Iterable[FeatureMetadata] = (),
+        cls, records: Iterable[FeatureRecord], features: Iterable[FeatureMetadata] = ()
     ) -> ChronisDataset:
         return cls(tuple(records), tuple(features))
 
     @property
     def users(self) -> tuple[str, ...]:
-        return tuple(sorted({record.user_id for record in self.records}))
-
-    @property
-    def timestamps(self) -> tuple[datetime, ...]:
-        return tuple(sorted({record.timestamp for record in self.records}))
+        return tuple(sorted({r.user_id for r in self.records}))
 
     @property
     def feature_names(self) -> tuple[str, ...]:
-        names = {record.feature_name for record in self.records}
-        names.update(feature.name for feature in self.features)
+        names = {r.feature_name for r in self.records}
+        names.update(f.name for f in self.features)
         return tuple(sorted(names))
 
     def by_user(self, user_id: str) -> tuple[FeatureRecord, ...]:
