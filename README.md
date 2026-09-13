@@ -56,7 +56,7 @@ python -m compileall -q .
 git diff --check
 ```
 
-Current regression result: **101 passed**.
+Current regression result: **105 passed**.
 
 The real Sprint 9 constrained-RAG generator remains dependency-injected so Sprint 11 does not duplicate Sprint 9 modeling/generation logic. The Phase-2 cross-sprint canonical safety-package/monorepo work is intentionally not fabricated inside this isolated Sprint 11 branch; `clinical_terms.py` remains the documented compatibility boundary until the canonical package graph is available.
 
@@ -66,7 +66,7 @@ The Sprint 11 code was reviewed against the Phase-2 closure findings without rep
 
 - `XCUT-3`: fixed. Behavioral DNA and Inheritance Protocol now expose public-key-only verification; private-key verification remains only as an internal signer convenience.
 - `XCUT-4`: fixed. Inheritance Protocol now rejects any verbatim run of 6 or more consecutive words from candidate session excerpts, with positive and negative regression cases.
-- Weather numerical follow-up: completed. The 45-session gate, historical weekday/regime matching, cosine ranking, confidence reduction, focus flags, malformed evidence, and hand-computed cosine/confidence checks are covered by regression tests.
+- Weather numerical follow-up: completed. The 45-session gate, historical weekday/regime matching, cosine ranking, confidence reduction, focus flags, malformed evidence, future-leakage protection, deterministic tie-breaking, and hand-computed cosine/confidence checks are covered by regression tests.
 - `XCUT-2`: not falsely marked closed in this isolated branch. The Phase-2 requirement is cross-sprint and requires one canonical package graph shared by Sprint 9, Sprint 11, and Sprint 12. The existing `clinical_terms.py` compatibility boundary is retained rather than introducing a second local safety implementation or fabricating a monorepo inside Sprint 11.
 - `XCUT-5`: not modified here because the finding belongs to the Sprint 1 foundation branch and changing that branch from Sprint 11 would violate the sprint ownership boundary.
 
@@ -76,4 +76,4 @@ The Sprint 11 code was reviewed against the Phase-2 closure findings without rep
     python -m pytest -q
     git diff --check
 
-Result: **103 passed**.
+Result: **105 passed**.

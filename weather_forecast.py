@@ -137,6 +137,14 @@ class WeatherForecastEngine:
             raise WeatherForecastError("history contains records for another user")
 
         user_history = list(history)
+
+        # Only observations strictly before the forecast origin may be
+        # used. Future-dated records are excluded to prevent temporal leakage.
+        user_history = [
+            record for record in user_history
+            if record.timestamp < current.timestamp
+        ]
+
         timestamps = [record.timestamp for record in user_history]
         if len(timestamps) != len(set(timestamps)):
             raise WeatherForecastError("history contains duplicate timestamps")
@@ -176,8 +184,8 @@ class WeatherForecastEngine:
                 )
                 for record in candidates
             ),
-            key=lambda item: item[0],
-            reverse=True,
+            # Similarity ties must not depend on input-list ordering.
+            key=lambda item: (-item[0], item[1].timestamp),
         )[: self.similarity_candidates]
 
         if not ranked:

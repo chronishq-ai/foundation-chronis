@@ -572,7 +572,23 @@ def test_weather_flags_high_and_low_focus_analogues():
     current = make_record(day=24, m_t=[1.0,0.0,0.0])
     history = make_history(MIN_SESSIONS)
     tomorrow = current.timestamp + timedelta(days=1)
-    matching = next(day for day in range(1,29) if make_record(day=day).timestamp.weekday() == tomorrow.weekday())
+    matching = next(day for day in range(1,24) if make_record(day=day).timestamp.weekday() == tomorrow.weekday())
+
+    # Make the planted analogue the only compatible pre-origin record so
+    # the test does not depend on incidental history ordering.
+    history = [
+        WeatherInput(
+            user_id=record.user_id,
+            timestamp=record.timestamp,
+            m_t=record.m_t,
+            p_t=regime(1, [0.0, 1.0]),
+            energy=record.energy,
+            social_engagement=record.social_engagement,
+            stress=record.stress,
+            productivity=record.productivity,
+        )
+        for record in history
+    ]
     history[0] = make_record(day=matching, productivity=0.9)
     result = engine.forecast(current=current, history=history)
     assert result.historical_focus_flag == "historically high-focus"
@@ -592,3 +608,86 @@ def test_weather_cosine_similarity_matches_hand_computed_value():
 def test_weather_confidence_matches_hand_computed_similarity_average():
     confidence = WeatherForecastEngine._confidence_from_similarity([1.0, 0.0, -1.0])
     assert confidence == pytest.approx((1.0 + 0.5 + 0.0) / 3.0)
+
+
+def test_weather_rejects_future_leakage_from_history():
+    engine = WeatherForecastEngine()
+    current = make_record(day=24)
+    history = make_history(MIN_SESSIONS)
+
+    tomorrow = current.timestamp + timedelta(days=1)
+    # Keep 45 valid pre-origin sessions, but make every pre-origin record
+    # incompatible by regime. The only matching record is future-dated.
+    history = [
+        WeatherInput(
+            user_id=record.user_id,
+            timestamp=record.timestamp,
+            m_t=record.m_t,
+            p_t=regime(1, [0.0, 1.0]),
+            energy=record.energy,
+            social_engagement=record.social_engagement,
+            stress=record.stress,
+            productivity=record.productivity,
+        )
+        for record in history
+    ]
+    future_match = make_record(
+        day=25,
+        m_t=[1.0, 0.0, 0.0],
+        regime_label=0,
+        posterior=[1.0],
+    )
+    assert future_match.timestamp.weekday() == tomorrow.weekday()
+    history.append(future_match)
+
+    result = engine.forecast(current=current, history=history)
+
+    assert isinstance(result, str)
+    assert "no historical analogue" in result.lower()
+
+
+def test_weather_tie_breaking_is_deterministic():
+    engine = WeatherForecastEngine(similarity_candidates=1)
+    current = make_record(day=24, m_t=[1.0, 0.0, 0.0])
+    tomorrow = current.timestamp + timedelta(days=1)
+
+    matching = []
+    for day in range(1, 25):
+        candidate = make_record(day=day, m_t=[1.0, 0.0, 0.0], energy=0.9)
+        if candidate.timestamp.weekday() == tomorrow.weekday():
+            matching.append(candidate)
+        if len(matching) == 2:
+            break
+
+    assert len(matching) == 2
+    matching[0] = WeatherInput(
+        user_id=matching[0].user_id,
+        timestamp=matching[0].timestamp,
+        m_t=matching[0].m_t,
+        p_t=matching[0].p_t,
+        energy=0.2,
+        social_engagement=0.7,
+        stress=0.4,
+        productivity=0.7,
+    )
+    matching[1] = WeatherInput(
+        user_id=matching[1].user_id,
+        timestamp=matching[1].timestamp,
+        m_t=matching[1].m_t,
+        p_t=matching[1].p_t,
+        energy=0.9,
+        social_engagement=0.7,
+        stress=0.4,
+        productivity=0.7,
+    )
+
+    history = make_history(MIN_SESSIONS)
+    history[0], history[1] = matching
+
+    first = engine.forecast(current=current, history=history)
+    second = engine.forecast(current=current, history=list(reversed(history)))
+
+    assert isinstance(first, WeatherForecast)
+    assert isinstance(second, WeatherForecast)
+    assert first.energy_level == second.energy_level
+    assert first.energy_confidence_interval == second.energy_confidence_interval
