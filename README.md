@@ -4,9 +4,9 @@
 **Project area:** CHRONIS AI/ML  
 **Scope:** Sprints 10, 11 and 12  
 **Ownership:**
-- **Sprint 10 — Mayank**
+- **Sprint 10 — Mayank then Kuheli**
 - **Sprint 11 — Kuheli**
-- **Sprint 12 — Mayank**
+- **Sprint 12 — Mayank then Kuheli**
 
 This repository contains the Sprint 10–12 implementation work. Phase 1 and Phase 2 work are consolidated into one working directory per sprint so each sprint can be opened, tested, and run without separate phase folders.
 
