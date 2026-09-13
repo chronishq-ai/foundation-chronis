@@ -438,7 +438,7 @@ keeping ownership and module boundaries explicit.
 
 # 9. Final Status
 
-### Sprint 10 — Mayank
+### Sprint 10 — Mayank then Kuheli
 **Phase 1:** Core Cold Start and D\* calibration completed.  
 **Phase 2:** Unit conversion, Stage-2 isolation, validation and audit-path
 hardening completed.
@@ -449,7 +449,7 @@ hardening completed.
 coverage and hardening completed.  
 **Local regression:** `105 passed`.
 
-### Sprint 12 — Mayank
+### Sprint 12 — Mayank then Kuheli
 **Phase 1:** The Mirror pipeline and supporting components completed.  
 **Phase 2:** Specificity, citation and sentence-tokenization safeguards
 strengthened.
