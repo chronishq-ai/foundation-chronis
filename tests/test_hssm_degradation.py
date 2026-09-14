@@ -164,3 +164,104 @@ def test_gate_default_path_unaffected_when_hssm_args_omitted():
         data, candidate_t=60, regime_sequence=None, hssm_observations=None)
 
     assert result_without["condition_2_degradation"] == result_explicit_none["condition_2_degradation"]
+
+
+# item 4 / R2-S56.4 mechanical sub-fix (this pass): model identity,
+# planted-change / stationary-null-control evidence, and
+# same-manifest reproducibility for the decision record.
+
+def test_regime_conditional_result_carries_model_id():
+    rng = np.random.default_rng(0)
+    pre = rng.normal(0, 1, (60, 3))
+    post = rng.normal(8, 1, (60, 3))
+    observations = np.vstack([pre, post])
+    regime_sequence = np.zeros(120, dtype=int)
+
+    result = evaluate_regime_conditional_degradation(
+        regime_sequence, observations, candidate_t=60)
+    assert result["model_id"] == "regime_conditional_gaussian_emission_v1"
+    assert result["model_version"]
+    assert "null_baseline_ll" in result
+    assert "pre_window_start_idx" in result and "post_window_end_idx" in result
+
+
+def test_scalar_gaussian_result_carries_model_id_tagged_not_doctrine_correct():
+    from phase_transition.degradation import PredictiveFitDegradation
+    np.random.seed(42)
+    signal = list(np.random.normal(0, 1, 100)) + list(np.random.normal(5, 1, 100))
+    result = PredictiveFitDegradation().degradation_score(signal, candidate_t=100)
+    assert result["model_id"] == "generic_scalar_gaussian_NOT_DOCTRINE_CORRECT"
+    assert result["model_version"]
+
+
+def test_gate_condition2_detail_carries_model_id_scalar_path():
+    """No regime_sequence/hssm_observations supplied -- gate falls back
+    to the scalar path, but the decision record still names it."""
+    np.random.seed(3)
+    signal = list(np.random.normal(0, 1, 100)) + list(np.random.normal(6, 1, 100))
+    gate = PhaseTransitionGate(stability_min_days=1)
+    result = gate.evaluate_candidate(signal, candidate_t=100)
+    assert result["condition_2_detail"]["model_id"] == \
+        "generic_scalar_gaussian_NOT_DOCTRINE_CORRECT"
+
+
+def test_gate_condition2_detail_carries_model_id_regime_conditional_path():
+    fixture = generate_synthetic_hssm_output(T=160, K=2, F=3, seed=7)
+    obs = fixture.observations.copy()
+    obs[80:] += 10.0  # planted emission shift, regime label untouched
+    gate = PhaseTransitionGate(stability_min_days=1)
+    result = gate.evaluate_candidate(
+        list(obs[:, 0]), candidate_t=80,
+        regime_sequence=fixture.regime_sequence, hssm_observations=obs)
+    assert result["condition_2_detail"]["model_id"] == \
+        "regime_conditional_gaussian_emission_v1"
+    assert result["condition_2_degradation"] is True
+
+
+def test_regime_conditional_planted_regime_change_degrades_past_threshold():
+    """Doc's acceptance test: planted regime change -> predictive score
+    degrades past the registered threshold."""
+    rng = np.random.default_rng(11)
+    pre = rng.normal(0, 1, (50, 4))
+    post = rng.normal(9, 1, (50, 4))  # sharp planted emission shift
+    observations = np.vstack([pre, post])
+    regime_sequence = np.zeros(100, dtype=int)
+
+    assert is_regime_conditional_degraded(
+        regime_sequence, observations, candidate_t=50, threshold=2.0)
+
+
+def test_regime_conditional_stationary_null_control_false_positive_rate():
+    """Doc's acceptance test: stationary null control -> false-positive
+    rate <= 5%. Runs many independent stationary (no real change)
+    datasets through the regime-conditional detector at the same
+    threshold used in production and checks the empirical FP rate."""
+    n_trials = 200
+    threshold = 2.0
+    false_positives = 0
+    for seed in range(n_trials):
+        rng = np.random.default_rng(1000 + seed)
+        observations = rng.normal(0, 1, (100, 3))  # no planted change
+        regime_sequence = np.zeros(100, dtype=int)
+        if is_regime_conditional_degraded(
+                regime_sequence, observations, candidate_t=50, threshold=threshold):
+            false_positives += 1
+    fp_rate = false_positives / n_trials
+    assert fp_rate <= 0.05, f"false-positive rate {fp_rate} exceeds 5% at threshold={threshold}"
+
+
+def test_regime_conditional_rerun_same_manifest_identical_result():
+    """Doc's acceptance test: re-run with same manifest -> identical
+    windows/version/score/decision."""
+    rng = np.random.default_rng(5)
+    pre = rng.normal(0, 1, (40, 2))
+    post = rng.normal(6, 1, (40, 2))
+    observations = np.vstack([pre, post])
+    regime_sequence = np.zeros(80, dtype=int)
+
+    result_a = evaluate_regime_conditional_degradation(
+        regime_sequence, observations, candidate_t=40)
+    result_b = evaluate_regime_conditional_degradation(
+        regime_sequence, observations, candidate_t=40)
+
+    assert result_a == result_b

@@ -1,7 +1,7 @@
 from phase_transition.bocpd import ChangepointDetector
 from phase_transition.degradation import PredictiveFitDegradation
-from phase_transition.hssm_degradation import is_regime_conditional_degraded
-from phase_transition.stability import RegimeStability
+from phase_transition.hssm_degradation import evaluate_regime_conditional_degradation
+from phase_transition.stability import RegimeStability, AmbiguousStabilityMetricError
 
 
 class PhaseTransitionGate:
@@ -25,7 +25,26 @@ class PhaseTransitionGate:
                  degradation_threshold: float = 2.0,
                  stability_min_days: int = 14,
                  bifurcation_log=None,
-                 bifurcation_evidence_window: float = 5.0):
+                 bifurcation_evidence_window: float = 5.0,
+                 require_regime_probabilities: bool = False):
+        """
+        require_regime_probabilities (item 3 mechanical sub-fix, added
+        this pass): when True, `evaluate_candidate`/`detect_transitions`/
+        `declared_transitions` raise `AmbiguousStabilityMetricError`
+        instead of silently falling back to the raw-variance
+        `RegimeStability.is_stabilizing` whenever a call omits
+        `regime_probabilities`. Default False preserves the exact
+        existing fallback behavior unchanged.
+
+        This flag does NOT make the doctrine-correct entropy metric the
+        only production path -- it only lets a caller who has already
+        decided to require it say so and fail loudly instead of
+        silently reusing old semantics. Making entropy the *default* /
+        *only* path for every caller is the metric-swap decision
+        `stability.py`'s HONESTY FLAG marks Senior-owned, with an
+        explicit "DO NOT MERGE without that review" -- not done here,
+        and not something this flag does either way.
+        """
         self.bocpd = ChangepointDetector(hazard=hazard)
         self.degradation = PredictiveFitDegradation()
         self.stability = RegimeStability(min_days=stability_min_days)
@@ -34,6 +53,7 @@ class PhaseTransitionGate:
         self.degradation_threshold = degradation_threshold
         self.bifurcation_log = bifurcation_log
         self.bifurcation_evidence_window = bifurcation_evidence_window
+        self.require_regime_probabilities = require_regime_probabilities
 
     def evaluate_candidate(self, data: list[float], candidate_t: int,
                              timestamps: list[float] | None = None,
@@ -80,12 +100,20 @@ class PhaseTransitionGate:
         pack requires before this becomes the production default.
         """
         if regime_sequence is not None and hssm_observations is not None:
-            degradation_met = is_regime_conditional_degraded(
+            degradation_detail = evaluate_regime_conditional_degradation(
                 regime_sequence, hssm_observations, candidate_t,
-                timestamps=timestamps, threshold=self.degradation_threshold)
+                timestamps=timestamps)
+            degradation_met = (
+                degradation_detail.get("valid", False)
+                and degradation_detail["degradation"] > self.degradation_threshold
+            )
         else:
-            degradation_met = self.degradation.is_degraded(
-                data, candidate_t, threshold=self.degradation_threshold)
+            degradation_detail = self.degradation.degradation_score(
+                data, candidate_t)
+            degradation_met = (
+                degradation_detail.get("valid", False)
+                and degradation_detail["degradation"] > self.degradation_threshold
+            )
 
         rupture_evidence = False
         if self.bifurcation_log is not None:
@@ -97,6 +125,16 @@ class PhaseTransitionGate:
         if regime_probabilities is not None:
             cond3_result = self.stability.is_stabilizing_entropy(
                 regime_probabilities, candidate_t, timestamps=timestamps)
+        elif self.require_regime_probabilities:
+            raise AmbiguousStabilityMetricError(
+                "PhaseTransitionGate(require_regime_probabilities=True) "
+                "but evaluate_candidate was called without "
+                "regime_probabilities -- refusing to silently fall back "
+                "to the raw-variance stability metric. Pass "
+                "regime_probabilities, or construct the gate with "
+                "require_regime_probabilities=False (the default) to "
+                "allow the raw-variance fallback."
+            )
         else:
             cond3_result = self.stability.is_stabilizing(
                 data, candidate_t, timestamps=timestamps)
@@ -110,6 +148,16 @@ class PhaseTransitionGate:
             "condition_2_degradation": cond2,
             "condition_2_degradation_score": degradation_met,
             "condition_2_rupture_evidence": rupture_evidence,
+            # item 4 / R2-S56.4 mechanical sub-fix (this pass): decision
+            # record always names which model produced condition 2 --
+            # never an anonymous Gaussian -- plus the exact windows and
+            # (when the regime-conditional path ran) the null-baseline
+            # comparison. Real fitted-HSSM predictive likelihood as the
+            # PRODUCTION DEFAULT still requires backbone.hssm (item 1,
+            # not in this zip) -- this only makes whichever model DID
+            # run traceable and reproducible, it does not swap the
+            # default per S56.4's full ask.
+            "condition_2_detail": degradation_detail,
             "condition_3_stability": cond3,
             "condition_3_detail": cond3_result,
             "declared_transition": declared,

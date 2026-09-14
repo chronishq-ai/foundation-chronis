@@ -34,26 +34,79 @@ class DomainRecord:
     history: list = field(default_factory=list)          # inherited + own window stats, append-only
 
 
-def should_split(within_var_by_window: list, between_var_by_window: list,
-                  min_sustained_windows: int = 2) -> bool:
-    """A split is confirmed only if within-cluster variance exceeds
-    between-cluster variance for `min_sustained_windows` CONTIGUOUS
-    windows (S56.8 fix: doctrine says 'sustained', which means an
-    unbroken run, not scattered total occurrences over the whole
-    history -- a qualifying window in month 1 and another in month 6
-    is not 'sustained'). Requires the longest contiguous run of
-    qualifying windows to meet the bar."""
-    if len(within_var_by_window) != len(between_var_by_window):
-        raise ValueError("within_var_by_window and between_var_by_window must be same length")
+def _longest_contiguous_qualifying_run(qualifies: list) -> tuple:
+    """One explicit temporal rule shared by should_split and should_merge
+    (R2-S56.7 fix): 'sustained' means an unbroken run of qualifying
+    windows, not a scattered total count anywhere in history. Returns
+    (longest_run_length, run_start_idx, run_end_idx) for the longest
+    contiguous stretch of True values in `qualifies` (run_end_idx
+    inclusive). Returns (0, -1, -1) if nothing qualifies."""
     longest_run = 0
+    best_start = best_end = -1
     current_run = 0
-    for w, b in zip(within_var_by_window, between_var_by_window):
-        if w > b:
+    current_start = 0
+    for i, q in enumerate(qualifies):
+        if q:
+            if current_run == 0:
+                current_start = i
             current_run += 1
-            longest_run = max(longest_run, current_run)
+            if current_run > longest_run:
+                longest_run = current_run
+                best_start = current_start
+                best_end = i
         else:
             current_run = 0
-    return longest_run >= min_sustained_windows
+    return longest_run, best_start, best_end
+
+
+def _check_timestamp_args(n_windows: int, timestamps: list | None,
+                           min_sustained_duration: float | None) -> None:
+    if timestamps is not None and len(timestamps) != n_windows:
+        raise ValueError("timestamps must be the same length as the window series")
+    if timestamps is not None and min_sustained_duration is None:
+        raise ValueError("min_sustained_duration is required when timestamps is supplied")
+    if timestamps is None and min_sustained_duration is not None:
+        raise ValueError(
+            "min_sustained_duration requires timestamps -- a window COUNT "
+            "alone cannot be converted into a real duration for "
+            "irregularly-spaced windows"
+        )
+
+
+def should_split(within_var_by_window: list, between_var_by_window: list,
+                  min_sustained_windows: int = 2,
+                  timestamps: list | None = None,
+                  min_sustained_duration: float | None = None) -> bool:
+    """A split is confirmed only if within-cluster variance exceeds
+    between-cluster variance for a CONTIGUOUS run of qualifying windows
+    (S56.8 fix: doctrine says 'sustained', which means an unbroken run,
+    not scattered total occurrences over the whole history -- a
+    qualifying window in month 1 and another in month 6 is not
+    'sustained').
+
+    Two modes:
+      - fixed-duration windows (default, timestamps=None): the longest
+        contiguous qualifying run must contain >= min_sustained_windows
+        windows.
+      - real-timestamp mode (timestamps supplied, R2-S56.7): windows may
+        be irregularly spaced, so window COUNT is not a valid duration
+        proxy. Pass `timestamps` (one per window, non-decreasing) and
+        `min_sustained_duration`; the longest contiguous qualifying run
+        must SPAN at least that much real time
+        (timestamps[run_end] - timestamps[run_start]), not merely
+        contain a certain number of windows."""
+    if len(within_var_by_window) != len(between_var_by_window):
+        raise ValueError("within_var_by_window and between_var_by_window must be same length")
+    _check_timestamp_args(len(within_var_by_window), timestamps, min_sustained_duration)
+
+    qualifies = [w > b for w, b in zip(within_var_by_window, between_var_by_window)]
+    longest_run, start, end = _longest_contiguous_qualifying_run(qualifies)
+
+    if timestamps is None:
+        return longest_run >= min_sustained_windows
+    if longest_run == 0:
+        return False
+    return (timestamps[end] - timestamps[start]) >= min_sustained_duration
 
 
 def should_merge(
@@ -62,17 +115,42 @@ def should_merge(
     transition_threshold: float = 0.3,
     comention_threshold: float = 0.3,
     min_sustained_windows: int = 2,
+    timestamps: list | None = None,
+    min_sustained_duration: float | None = None,
 ) -> bool:
     """Merge confirmed only if BOTH behavioral transition probability AND
     narrative co-mention rate exceed their thresholds in the SAME window,
-    sustained across >= min_sustained_windows such windows."""
+    for a CONTIGUOUS run of such windows (R2-S56.7 fix: this previously
+    counted total qualifying windows anywhere in the history, giving
+    'sustained' an asymmetric meaning from should_split's -- windows 1
+    and 7 both qualifying used to be enough; that is not a sustained
+    run. Now uses the same `_longest_contiguous_qualifying_run` rule
+    should_split uses.
+
+    Two modes, same as should_split:
+      - fixed-duration windows (default, timestamps=None): the longest
+        contiguous qualifying run must contain >= min_sustained_windows
+        windows.
+      - real-timestamp mode (timestamps supplied): pass `timestamps`
+        (one per window, non-decreasing) and `min_sustained_duration`;
+        decision is based on the actual real-time SPAN of the longest
+        contiguous qualifying run, not the number of windows in it --
+        matters when windows are irregularly spaced."""
     if len(cross_transition_prob_by_window) != len(narrative_comention_rate_by_window):
         raise ValueError("cross_transition_prob_by_window and narrative_comention_rate_by_window must be same length")
-    both_exceed_count = sum(
-        1 for t, c in zip(cross_transition_prob_by_window, narrative_comention_rate_by_window)
-        if t > transition_threshold and c > comention_threshold
-    )
-    return both_exceed_count >= min_sustained_windows
+    _check_timestamp_args(len(cross_transition_prob_by_window), timestamps, min_sustained_duration)
+
+    qualifies = [
+        t > transition_threshold and c > comention_threshold
+        for t, c in zip(cross_transition_prob_by_window, narrative_comention_rate_by_window)
+    ]
+    longest_run, start, end = _longest_contiguous_qualifying_run(qualifies)
+
+    if timestamps is None:
+        return longest_run >= min_sustained_windows
+    if longest_run == 0:
+        return False
+    return (timestamps[end] - timestamps[start]) >= min_sustained_duration
 
 
 class DomainRegistry:

@@ -68,3 +68,14 @@ def test_evaluate_generative_model_degradation_insufficient_window():
         [1.0, 2.0], candidate_t=0, fit_fn=_mean_fit, predict_ll_fn=_neg_sq_error_ll,
     )
     assert not result["valid"]
+
+def test_predictive_fit_degradation_physically_relocated_to_diagnostics():
+    """Item 4 doc ask: scalar-Gaussian path lives only under
+    diagnostics/, not as production logic in degradation.py."""
+    from phase_transition.diagnostics.scalar_gaussian_degradation import (
+        PredictiveFitDegradation as RealLocation,
+    )
+    from phase_transition.degradation import (
+        PredictiveFitDegradation as ReExported,
+    )
+    assert RealLocation is ReExported  # backward-compat re-export, same class

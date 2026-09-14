@@ -1,14 +1,51 @@
 """
 Day 18 -- Domain confidence scoring (Bible Part 5.8).
 
+R2-S56.5 FIX (item 5 of Sprint 5-6 changes pack).
+
 Confidence computed from 4 factors:
   - observation count (more episodes -> more confidence, saturating)
   - persistence duration (longer-lived domain -> more confidence, saturating)
   - cross-phase survival (domains that survive a phase transition get the
     HIGHEST confidence weight -- doctrine calls this "the strongest signal
     of true stability")
-  - behavioral-narrative coherence: a real effect-size estimate of the
-    co-occurrence relationship (see S56.4 below), NOT an inverted p-value.
+  - behavioral-narrative coherence: a real dependence-aware effect-size
+    estimate (phi coefficient + bootstrap CI), NOT raw co-occurrence rate
+    and NOT an inverted p-value.
+
+The old design conflated two different statistical questions under one
+"coherence" number:
+  (a) is the behavioral<->narrative association statistically significant
+      (a null-hypothesis test question -- answered upstream by
+      domain_alignment.align_domains' corrected p-value, R2-S56.2), and
+  (b) how strong/stable is that association (an effect-size question).
+
+Neither of those was ever "the probability the domain relationship is
+true" -- `1 - fisher_p_value` treated a p-value as if it were that
+probability, which is not a valid interpretation of a p-value, and the
+raw co-occurrence RATE isn't a dependence measure either (two totally
+independent streams that are each individually common will co-occur
+often by chance alone).
+
+This module now keeps those two questions as two separate, explicitly
+named objects:
+  - DomainSignificance: the corrected p-value/method from upstream
+    (domain_alignment), plus a plain significant/not-significant call
+    at a declared alpha. Never converted into a magnitude or a score.
+  - DomainMagnitude: a genuine dependence effect size -- the phi
+    coefficient (the binary-variable analogue of a correlation
+    coefficient) between the per-episode behavioral and narrative
+    indicator arrays, with a bootstrap percentile CI. This is what
+    actually answers "how coherent is this pairing", correcting for
+    each stream's own base rate.
+
+`compute_domain_confidence` REQUIRES both a corrected significance
+result and both per-episode indicator arrays -- there is no fallback
+path in this module. Callers that only have a raw/uncorrected p-value
+and no per-episode indicators cannot call this function; see
+`domain_emergence.legacy_diagnostic` for the quarantined old formula,
+which is diagnostic-only and must never be imported by production code
+(enforced by the repo-wide grep CI check, item 8/XCUT-2).
 
 Domains below MIN_CONFIDENCE_THRESHOLD are "candidate" status only -- not
 usable as input to the claims engine (out of scope here, Sprint 6 doesn't
@@ -18,59 +55,61 @@ would gate on).
 
 from __future__ import annotations
 from dataclasses import dataclass
-import warnings
+import math
 import numpy as np
 
 MIN_CONFIDENCE_THRESHOLD = 0.5
 
-# S56.4 METRIC SWAP -- implemented per user request, ships WITHOUT the
-# Mandatory senior sign-off the pack requires for this ID (statistical-
-# estimator design choice, "Senior-only per the Ownership Model"). DO
-# NOT MERGE without that review; flag it explicitly in the PR.
-#
-# Chosen formulation: bootstrap-stability effect size (one of the pack's
-# three named acceptable options -- odds ratio+interval, Bayesian
-# posterior, or bootstrap stability). coherence_score is now the LOWER
-# bound of a bootstrap percentile confidence interval on the observed
-# co-occurrence RATE across episodes (`co_occurrence_indicator`, a 0/1
-# array). This is a genuine effect-size/confidence-in-magnitude
-# statement ("we're 95% confident the true co-occurrence rate is at
-# least this high"), not a claim about P(the domain relationship is
-# true) -- it does not have the p-value-as-probability misinterpretation
-# `1 - fisher_p_value` had.
-#
-# Legacy path: when `co_occurrence_indicator` is NOT supplied (caller
-# only has a p-value, e.g. not yet threaded per-episode indicators
-# through), compute_domain_confidence falls back to the old
-# `1 - fisher_p_value` formula and emits a RuntimeWarning every call --
-# this fallback is flagged, not silently treated as equivalent.
+# Corrected p-value provenance this module will accept as a genuine
+# "significance" input. Anything else is refused -- an uncorrected raw
+# p-value is not an acceptable substitute (see domain_alignment.py
+# R2-S56.2 / R2-S56.6 for what produces these).
+_ACCEPTED_SIGNIFICANCE_METHODS = frozenset({
+    "per_episode_fisher_exact",
+    "subject_level_within_subject_permutation",
+})
 
 
-def _bootstrap_coherence_effect_size(
-    co_occurrence_indicator: np.ndarray,
-    n_bootstrap: int = 1000,
-    ci: float = 0.95,
-    seed: int | None = None,
-) -> dict:
-    """Bootstrap percentile CI on the co-occurrence rate. Returns the
-    observed rate plus the CI bounds; `ci_lower` is used as the
-    conservative coherence effect-size estimate."""
-    x = np.asarray(co_occurrence_indicator, dtype=float)
-    n = len(x)
-    if n == 0:
-        return {"rate": 0.0, "ci_lower": 0.0, "ci_upper": 0.0}
-    rng = np.random.default_rng(seed)
-    boot_rates = np.array([
-        x[rng.integers(0, n, size=n)].mean() for _ in range(n_bootstrap)
-    ])
-    alpha = (1.0 - ci) / 2.0
-    lower = float(np.quantile(boot_rates, alpha))
-    upper = float(np.quantile(boot_rates, 1.0 - alpha))
-    return {
-        "rate": float(x.mean()),
-        "ci_lower": max(0.0, lower),
-        "ci_upper": min(1.0, upper),
-    }
+class MissingCorrectedEvidenceError(TypeError):
+    """Raised when compute_domain_confidence is called without the full
+    corrected-evidence bundle it now requires: a significance result
+    from domain_alignment's corrected p-value pipeline AND both
+    per-episode behavioral/narrative indicator arrays for the real
+    dependence effect size. No silent fallback to an uncorrected or
+    invented number -- this is a typed failure, not a bare `assert`
+    (PH0.2 pattern)."""
+
+
+class UnrecognizedSignificanceMethodError(ValueError):
+    """Raised when significance_method isn't one of the corrected
+    pipeline's known output labels -- refuses to treat an arbitrary or
+    uncorrected p-value as if it were the corrected result."""
+
+
+@dataclass
+class DomainSignificance:
+    """Answers ONE question: is the association statistically
+    significant at the declared alpha, per the corrected null test
+    upstream. Never a magnitude, never a "probability the domain is
+    true"."""
+    p_value: float
+    method: str
+    alpha: float
+    is_significant: bool
+
+
+@dataclass
+class DomainMagnitude:
+    """Answers a different question: how strong/stable is the
+    association, independent of whether it cleared a significance
+    threshold. `phi` is the observed phi coefficient (in [-1, 1]) between
+    the per-episode behavioral and narrative indicator arrays; `ci_lower`
+    /`ci_upper` bound a bootstrap percentile CI on phi. This corrects for
+    each stream's own base rate, unlike a raw co-occurrence rate."""
+    phi: float
+    ci_lower: float
+    ci_upper: float
+    n_bootstrap: int
 
 
 DEFAULT_WEIGHTS = {
@@ -89,7 +128,9 @@ class DomainConfidence:
     coherence_score: float
     confidence: float
     status: str   # "active" | "candidate"
-    coherence_method: str = "legacy_one_minus_p"  # or "bootstrap_ci_lower"
+    significance: DomainSignificance
+    magnitude: DomainMagnitude
+    coherence_method: str = "phi_bootstrap_ci_lower"
 
 
 def _saturating(x: float, scale: float) -> float:
@@ -99,12 +140,57 @@ def _saturating(x: float, scale: float) -> float:
     return x / (x + scale)
 
 
+def _phi_coefficient(a: np.ndarray, b: np.ndarray) -> float:
+    """Matthews/phi correlation coefficient between two binary arrays --
+    a real dependence measure that accounts for each variable's own
+    base rate (unlike a raw joint co-occurrence rate). 0 = independent,
+    +1 = perfectly co-occurring, -1 = perfectly mutually exclusive."""
+    a = np.asarray(a).astype(bool)
+    b = np.asarray(b).astype(bool)
+    n11 = int(np.sum(a & b))
+    n10 = int(np.sum(a & ~b))
+    n01 = int(np.sum(~a & b))
+    n00 = int(np.sum(~a & ~b))
+    denom = math.sqrt((n11 + n10) * (n01 + n00) * (n11 + n01) * (n10 + n00))
+    if denom == 0.0:
+        return 0.0
+    return (n11 * n00 - n10 * n01) / denom
+
+
+def _bootstrap_phi_ci(
+    behavioral_indicator: np.ndarray,
+    narrative_indicator: np.ndarray,
+    n_bootstrap: int,
+    ci: float,
+    seed: int | None,
+) -> tuple[float, float]:
+    """Paired bootstrap (resample episode indices, keep the two streams
+    paired per resample) percentile CI on the phi coefficient."""
+    a = np.asarray(behavioral_indicator)
+    b = np.asarray(narrative_indicator)
+    n = len(a)
+    if n == 0:
+        return 0.0, 0.0
+    rng = np.random.default_rng(seed)
+    boot_phi = np.empty(n_bootstrap)
+    for i in range(n_bootstrap):
+        idx = rng.integers(0, n, size=n)
+        boot_phi[i] = _phi_coefficient(a[idx], b[idx])
+    alpha = (1.0 - ci) / 2.0
+    lower = float(np.quantile(boot_phi, alpha))
+    upper = float(np.quantile(boot_phi, 1.0 - alpha))
+    return max(-1.0, lower), min(1.0, upper)
+
+
 def compute_domain_confidence(
     observation_count: int,
     persistence_duration: float,
     n_phase_transitions_survived: int,
-    fisher_p_value: float,
-    co_occurrence_indicator: np.ndarray | None = None,
+    significance_pvalue: float,
+    significance_method: str,
+    behavioral_indicator: np.ndarray | None,
+    narrative_indicator: np.ndarray | None,
+    alpha: float = 0.05,
     n_bootstrap: int = 1000,
     bootstrap_ci: float = 0.95,
     bootstrap_seed: int | None = None,
@@ -117,25 +203,52 @@ def compute_domain_confidence(
     """Compute weighted domain confidence and derive active/candidate
     status.
 
-    co_occurrence_indicator (S56.4 fix, preferred path): 1D array of
-    0/1 per episode/window indicating whether the joint-domain pattern
-    held. When supplied, coherence_score is the lower bound of a
-    bootstrap percentile CI on that rate -- a real effect-size
-    statement, not a p-value inversion. fisher_p_value is still
-    accepted/stored for logging even in this path but no longer drives
-    coherence_score.
+    significance_pvalue / significance_method (REQUIRED, R2-S56.5 fix):
+    the corrected p-value and its provenance label from
+    domain_alignment.align_domains' AlignmentResult (`pair_pvalues`,
+    `pvalue_method`) -- must be one of the corrected pipeline's known
+    method labels. Used ONLY to answer significance (is_significant at
+    `alpha`), never inverted into a score or blended into `confidence`.
 
-    fisher_p_value (legacy path, used only when co_occurrence_indicator
-    is omitted): the Bonferroni-corrected p from
-    domain_alignment.align_domains. Falls back to `1 - fisher_p_value`
-    and emits a RuntimeWarning, since that formula misrepresents a
-    p-value as a probability the relationship is true -- kept only for
-    backward compatibility with callers that don't yet have per-episode
-    indicators wired through.
+    behavioral_indicator / narrative_indicator (REQUIRED, R2-S56.5 fix):
+    parallel 1D 0/1 arrays, one entry per episode, indicating whether
+    the behavioral pattern / narrative pattern held in that episode.
+    Used to compute the phi coefficient (a real dependence effect size)
+    and its bootstrap CI -- this is what drives `coherence_score`, not
+    a raw co-occurrence rate and not a p-value.
+
+    Calling this without the full corrected-evidence bundle raises
+    MissingCorrectedEvidenceError -- there is no silent fallback in this
+    module (see domain_emergence.legacy_diagnostic for the quarantined
+    old formula, diagnostic-only, never wired into this function).
 
     survival_scale=1.0 means even 1 survived transition already gives
     strong (0.5) survival credit, consistent with doctrine treating ANY
     cross-phase survival as a strong signal, not requiring many."""
+    if behavioral_indicator is None or narrative_indicator is None:
+        raise MissingCorrectedEvidenceError(
+            "compute_domain_confidence requires both behavioral_indicator "
+            "and narrative_indicator (per-episode 0/1 arrays) to compute "
+            "a real dependence effect size -- there is no legacy "
+            "raw-p-value fallback in this module. See "
+            "domain_emergence.legacy_diagnostic if you are doing "
+            "migration-era comparison work only (never for a production "
+            "decision)."
+        )
+    if len(behavioral_indicator) != len(narrative_indicator):
+        raise ValueError(
+            "behavioral_indicator and narrative_indicator must be the "
+            "same length (one entry per episode)."
+        )
+    if significance_method not in _ACCEPTED_SIGNIFICANCE_METHODS:
+        raise UnrecognizedSignificanceMethodError(
+            f"significance_method={significance_method!r} is not a "
+            f"recognized corrected-pipeline output "
+            f"({sorted(_ACCEPTED_SIGNIFICANCE_METHODS)}). Pass the "
+            "pvalue_method from domain_alignment.AlignmentResult, not "
+            "an arbitrary/uncorrected p-value."
+        )
+
     w = weights or DEFAULT_WEIGHTS
     if not abs(sum(w.values()) - 1.0) < 1e-9:
         raise ValueError(f"weights must sum to 1.0, got {sum(w.values())}")
@@ -144,24 +257,26 @@ def compute_domain_confidence(
     persistence_score = _saturating(persistence_duration, persistence_scale)
     survival_score = _saturating(n_phase_transitions_survived, survival_scale)
 
-    if co_occurrence_indicator is not None:
-        effect_size = _bootstrap_coherence_effect_size(
-            co_occurrence_indicator, n_bootstrap=n_bootstrap,
-            ci=bootstrap_ci, seed=bootstrap_seed,
-        )
-        coherence_score = effect_size["ci_lower"]
-        coherence_method = "bootstrap_ci_lower"
-    else:
-        warnings.warn(
-            "compute_domain_confidence: co_occurrence_indicator not "
-            "supplied -- falling back to legacy `1 - fisher_p_value` "
-            "coherence formula, which is NOT a valid effect-size "
-            "estimate (see S56.4 HONESTY FLAG in domain_confidence.py). "
-            "Pass per-episode co_occurrence_indicator when available.",
-            RuntimeWarning, stacklevel=2,
-        )
-        coherence_score = max(0.0, min(1.0, 1.0 - fisher_p_value))
-        coherence_method = "legacy_one_minus_p"
+    significance = DomainSignificance(
+        p_value=significance_pvalue,
+        method=significance_method,
+        alpha=alpha,
+        is_significant=significance_pvalue < alpha,
+    )
+
+    phi = _phi_coefficient(behavioral_indicator, narrative_indicator)
+    ci_lower, ci_upper = _bootstrap_phi_ci(
+        behavioral_indicator, narrative_indicator,
+        n_bootstrap=n_bootstrap, ci=bootstrap_ci, seed=bootstrap_seed,
+    )
+    magnitude = DomainMagnitude(
+        phi=phi, ci_lower=ci_lower, ci_upper=ci_upper, n_bootstrap=n_bootstrap,
+    )
+    # Coherence score used in the confidence blend: the conservative
+    # (CI-lower-bound) dependence effect size, clipped to [0, 1] --
+    # negative/anti-correlated pairings contribute no positive
+    # "coherence" credit rather than being folded in as a penalty here.
+    coherence_score = max(0.0, ci_lower)
 
     confidence = (
         w["observation"] * obs_score
@@ -180,51 +295,7 @@ def compute_domain_confidence(
         coherence_score=coherence_score,
         confidence=confidence,
         status=status,
-        coherence_method=coherence_method,
+        significance=significance,
+        magnitude=magnitude,
+        coherence_method="phi_bootstrap_ci_lower",
     )
-
-
-def bootstrap_domain_stability(
-    co_occurrence_indicator: np.ndarray,
-    n_bootstrap: int = 1000,
-    seed: int | None = None,
-) -> float:
-    """Original S56.4 diagnostic: fraction of bootstrap resamples where
-    the pattern's resampled rate stays above 0 (a coarse stability
-    proxy). Kept for backward compatibility / comparison purposes.
-    `compute_domain_confidence`'s actual coherence_score now uses
-    `_bootstrap_coherence_effect_size`'s CI-lower-bound instead (a
-    stricter effect-size estimate than this simple >0 fraction)."""
-    x = np.asarray(co_occurrence_indicator)
-    rng = np.random.default_rng(seed)
-    n = len(x)
-    if n == 0:
-        return 0.0
-    hits = 0
-    for _ in range(n_bootstrap):
-        resample = x[rng.integers(0, n, size=n)]
-        if resample.mean() > 0:
-            hits += 1
-    return hits / n_bootstrap
-
-
-def compare_confidence_formulations(
-    fisher_p_value: float,
-    co_occurrence_indicator: np.ndarray,
-    n_bootstrap: int = 1000,
-    seed: int | None = None,
-) -> dict:
-    """Reports `1 - fisher_p_value` (legacy) side by side with the
-    bootstrap-stability-fraction estimate and the CI-lower-bound
-    estimate now actually used by compute_domain_confidence, so all
-    three are comparable on the same underlying evidence."""
-    naive = max(0.0, min(1.0, 1.0 - fisher_p_value))
-    bootstrap = bootstrap_domain_stability(co_occurrence_indicator, n_bootstrap, seed)
-    effect_size = _bootstrap_coherence_effect_size(
-        co_occurrence_indicator, n_bootstrap=n_bootstrap, seed=seed)
-    return {
-        "naive_one_minus_p": naive,
-        "bootstrap_stability": bootstrap,
-        "bootstrap_ci_lower": effect_size["ci_lower"],
-        "divergence": abs(naive - bootstrap),
-    }

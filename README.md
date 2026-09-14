@@ -67,17 +67,28 @@ split/merge lifecycle (append-only, parent preservation), Bonferroni-vs-BH
 comparison logging, and the real HSSM adapter's error paths — 140 tests total
 across both packages.
 
-## Running tests
+## Installing & running tests (XCUT-1, packaging fix)
+
+This is now a real installable package -- `bocd/`, `phase_transition/`,
+`domain_emergence/` are proper packages with pinned dependency versions
+in `pyproject.toml`. There is no `pythonpath` hack anymore; imports
+resolve because the package is actually installed, the same as for any
+real consumer of this repo.
 
 ```bash
-pip install pytest numpy scipy hdbscan river --break-system-packages
+pip install -e ".[dev]"   # core deps + bertopic + matplotlib + pytest, all pinned
 pytest tests/ -q
 ```
-(`pyproject.toml` sets `pythonpath = ["."]` so `phase_transition`/
-`domain_emergence` imports resolve without installing the package.)
 
-`bertopic` is optional — install it (`pip install bertopic sentence-transformers
-river --break-system-packages`) to exercise `BERTopicWrapper` end-to-end;
-without it, `create_topic_model()`'s default path raises a clear
-`ImportError` and the lightweight `NarrativeTopicModel` path
-(`use_bertopic=False`) remains fully covered regardless.
+`bertopic` is an optional extra (`pip install -e ".[bertopic]"`) to
+exercise `BERTopicWrapper` end-to-end; without it, `create_topic_model()`'s
+default path raises a clear `ImportError` and the lightweight
+`NarrativeTopicModel` path (`use_bertopic=False`) remains fully covered
+regardless.
+
+**No CI enforcement yet (XCUT-2 still open).** The install is real and
+pinned (XCUT-1), but nothing automatically enforces the doc's
+architectural invariants (no `synthetic_hssm` imports in production, no
+legacy `1 - p` path, no raw-variance production stability path, no bare
+`assert` on a production-path invariant) on push/PR — that still relies
+on manual review.

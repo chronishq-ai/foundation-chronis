@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  invariants:
+    name: Architectural invariants (XCUT-2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      # No install needed: ci/check_architectural_invariants.py is pure
+      # stdlib (ast/tokenize) by design, so this job never depends on
+      # the package's own dependency pins resolving.
+      - name: Run architectural invariant checks
+        run: python3 ci/check_architectural_invariants.py
+        # Exits nonzero only on checks 1/2/4 (blocking). Check 3
+        # (raw-variance metric swap, item 3) is intentionally
+        # non-blocking and reported every run -- see script docstring.
+
+  test:
+    name: Full test suite
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install package (dev + bertopic extras)
+        run: pip install -e ".[dev,bertopic]"
+      - name: Run tests
+        run: pytest tests/ -v
+        # bertopic/hdbscan/river/umap-learn are hard-pinned deps of the
+        # dev/bertopic extras above, so a clean CI run should see 0
+        # skips here -- skips only happen in sandboxes that can't
+        # install those extras (see SPRINT5-6_Changes_Final.md item 7).

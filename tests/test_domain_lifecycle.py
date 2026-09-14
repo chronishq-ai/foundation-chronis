@@ -51,6 +51,76 @@ def test_should_merge_only_one_condition_never_both():
                          comention_threshold=0.3, min_sustained_windows=2) is False
 
 
+def test_should_merge_scattered_non_contiguous_not_sustained():
+    """R2-S56.7 regression: windows 1,3,5,7 (of 8) all qualify -- 4 total
+    qualifying windows, well over min_sustained_windows=2 -- but none of
+    them are adjacent, so this must NOT count as 'sustained'. This is
+    exactly the total-count-vs-contiguous-run bug should_split already
+    had fixed; should_merge must use the same rule."""
+    trans =     [0.9, 0.1, 0.9, 0.1, 0.9, 0.1, 0.9, 0.1]
+    comention = [0.9, 0.1, 0.9, 0.1, 0.9, 0.1, 0.9, 0.1]
+    assert should_merge(trans, comention, transition_threshold=0.3,
+                         comention_threshold=0.3, min_sustained_windows=2) is False
+
+
+def test_should_merge_contiguous_windows_triggers_once_duration_met():
+    """Windows 1,2,3,4 (of the 6) form one unbroken qualifying run of
+    length 4 -- should merge once min_sustained_windows<=4."""
+    trans =     [0.1, 0.9, 0.9, 0.9, 0.9, 0.1]
+    comention = [0.1, 0.9, 0.9, 0.9, 0.9, 0.1]
+    assert should_merge(trans, comention, transition_threshold=0.3,
+                         comention_threshold=0.3, min_sustained_windows=4) is True
+    assert should_merge(trans, comention, transition_threshold=0.3,
+                         comention_threshold=0.3, min_sustained_windows=5) is False
+
+
+def test_should_merge_irregular_timestamps_uses_real_duration_not_count():
+    """R2-S56.7: with irregularly-spaced windows, a 2-window contiguous
+    qualifying run can span very different real time depending on the
+    gaps between those specific windows -- decision must follow the
+    actual elapsed time, not just 'it was 2 windows'."""
+    trans = [0.9, 0.9, 0.1]
+    comention = [0.9, 0.9, 0.1]
+    # run covers windows 0-1: tightly spaced (1 day apart) -> short span
+    tight_timestamps = [0.0, 1.0, 30.0]
+    assert should_merge(
+        trans, comention, transition_threshold=0.3, comention_threshold=0.3,
+        timestamps=tight_timestamps, min_sustained_duration=10.0,
+    ) is False
+    # same qualifying pattern, but the run's two windows are 30 days
+    # apart -> spans enough real time to count as sustained
+    wide_timestamps = [0.0, 30.0, 60.0]
+    assert should_merge(
+        trans, comention, transition_threshold=0.3, comention_threshold=0.3,
+        timestamps=wide_timestamps, min_sustained_duration=10.0,
+    ) is True
+
+
+def test_should_merge_timestamps_without_duration_raises():
+    with pytest.raises(ValueError):
+        should_merge([0.9], [0.9], timestamps=[0.0])
+
+
+def test_should_merge_duration_without_timestamps_raises():
+    with pytest.raises(ValueError):
+        should_merge([0.9], [0.9], min_sustained_duration=5.0)
+
+
+def test_should_split_irregular_timestamps_uses_real_duration_not_count():
+    """Same temporal rule applied to should_split for symmetry (R2-S56.7:
+    'apply one explicit temporal rule to both')."""
+    within = [5.0, 6.0, 1.0]
+    between = [2.0, 2.0, 5.0]
+    tight_timestamps = [0.0, 1.0, 30.0]
+    assert should_split(
+        within, between, timestamps=tight_timestamps, min_sustained_duration=10.0,
+    ) is False
+    wide_timestamps = [0.0, 30.0, 60.0]
+    assert should_split(
+        within, between, timestamps=wide_timestamps, min_sustained_duration=10.0,
+    ) is True
+
+
 def test_registry_register_and_get():
     reg = DomainRegistry()
     did = reg.register_domain(history=[{"window": 1}])

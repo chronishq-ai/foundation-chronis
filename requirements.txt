@@ -1,7 +1,8 @@
-numpy
-scipy
-matplotlib
-scikit-learn
-hdbscan
-river
-pytest
+# Deprecated as of XCUT-1 (packaging fix, Sprint 5-6 remediation).
+# This file used to list unpinned deps separately from pyproject.toml --
+# two sources of truth that could (and did) drift apart. Dependencies
+# and their pinned, verified versions now live only in pyproject.toml.
+#
+# Install:
+#   pip install -e .            # core (numpy/scipy/scikit-learn/hdbscan/river/umap-learn)
+#   pip install -e ".[dev]"     # core + bertopic + matplotlib + pytest

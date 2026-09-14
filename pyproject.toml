@@ -1,2 +1,49 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chronis-phase-transition-domain-emergence"
+version = "0.6.0"
+description = "Chronis Sprint 5-6: phase-transition gate + domain-emergence engine"
+requires-python = ">=3.11"
+readme = "README.md"
+
+# Pinned to the exact versions verified end-to-end in item 7's remediation
+# pass (see SPRINT5-6_Changes_Final.md item 7 "Versions this was verified
+# against"). Unpinned ranges are how the pack's own P0/P1 findings went
+# undetected for a full sprint -- XCUT-1 requires pinned versions, not
+# floating ones.
+dependencies = [
+    "numpy==2.4.4",
+    "scipy>=1.11,<2",
+    "scikit-learn==1.8.0",
+    "hdbscan==0.8.44",
+    "river==0.26.1",
+    "umap-learn==0.5.12",
+]
+
+[project.optional-dependencies]
+# BERTopic path (item 7). Not a hard dependency: create_topic_model()
+# still defaults to BERTopicWrapper and raises a clear ImportError if
+# this extra isn't installed -- see narrative_topics.py. Kept optional
+# so a clean-room install of the core package doesn't require it.
+bertopic = ["bertopic==0.17.4"]
+# matplotlib is only used by the vendored bocd/ plotting helper
+# (plot_posterior), never by the production gate path.
+plotting = ["matplotlib>=3.8,<4"]
+test = ["pytest>=8,<9"]
+dev = [
+    "chronis-phase-transition-domain-emergence[bertopic,plotting,test]",
+]
+
+[tool.setuptools.packages.find]
+include = ["phase_transition*", "domain_emergence*", "bocd*"]
+exclude = ["tests*"]
+
 [tool.pytest.ini_options]
-pythonpath = ["."]
+testpaths = ["tests"]
+# NOTE: no `pythonpath = ["."]` here (XCUT-1). Tests import
+# phase_transition/domain_emergence/bocd as installed packages
+# (`pip install -e .`), same as any real consumer of this repo would --
+# not via a PYTHONPATH hack that only works inside this checkout.

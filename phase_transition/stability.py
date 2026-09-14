@@ -15,6 +15,20 @@ import numpy as np
 # documents the gap; see KNOWN_LIMITATIONS.md.
 
 
+class AmbiguousStabilityMetricError(Exception):
+    """Raised (this pass, item 3 mechanical sub-fix) when a caller opts
+    into `require_regime_probabilities=True` on `PhaseTransitionGate`
+    but a call omits `regime_probabilities` -- i.e. the caller has
+    declared "only the doctrine-correct entropy metric is acceptable
+    here" and the raw-variance path would otherwise be silently
+    substituted. NOT raised by default: making this the ONLY production
+    path (rather than an opt-in a caller can request) is the metric-swap
+    decision `stability.py`'s HONESTY FLAG marks Senior-owned / DO NOT
+    MERGE without sign-off -- this exception exists so a caller who
+    already has real regime posteriors can choose to enforce strictness
+    today, without that choice being forced on every other caller."""
+
+
 def regime_posterior_entropy(probabilities) -> float:
     """Shannon entropy (nats) of a regime-probability vector, the
     doctrine-correct 'uncertainty' object for condition 3. Zero-probability
@@ -117,6 +131,12 @@ class RegimeStability:
             "first_half_var": first_half_var,
             "second_half_var": second_half_var,
             "reset": not decreasing,
+            # Explicit, inspectable tag (item 3 mechanical sub-fix) --
+            # never silently equivalent to the doctrine-correct
+            # `regime_posterior_entropy` metric below. A caller/gate can
+            # branch on this field instead of having to know which
+            # method it called.
+            "metric": "raw_value_variance_NOT_DOCTRINE_CORRECT",
         }
 
     def is_stabilizing_entropy(self, regime_probabilities: list,

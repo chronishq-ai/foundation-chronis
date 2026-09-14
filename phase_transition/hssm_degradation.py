@@ -49,6 +49,13 @@ from scipy.stats import norm
 
 from phase_transition.degradation import evaluate_generative_model_degradation
 
+# item 4 / R2-S56.4 mechanical sub-fix (this pass): declared identity for
+# this model so it can never appear as an anonymous Gaussian in a
+# decision record. This identifies WHICH code path produced a score --
+# it is not a claim of doctrine compliance (see module docstring above).
+MODEL_ID = "regime_conditional_gaussian_emission_v1"
+MODEL_VERSION = "harness-v1"
+
 
 def stack_regime_observations(regime_sequence, observations) -> np.ndarray:
     """Combine (T,) regime labels and (T, F) observations into a single
@@ -188,6 +195,7 @@ def evaluate_regime_conditional_degradation(
         stacked.tolist(), candidate_t, fit_fn, predict_ll_fn,
         timestamps=timestamps, pre_window=pre_window, post_window=post_window,
         null_baseline_ll_fn=pooled_gaussian_null_ll,
+        model_id=MODEL_ID, model_version=MODEL_VERSION,
     )
     if not result["valid"]:
         return result

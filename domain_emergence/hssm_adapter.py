@@ -22,6 +22,32 @@ import time) so this module can still be imported/tested in isolation
 before backbone.hssm is available in the environment, without masking
 a real missing-dependency error with a fallback that silently swaps in
 fake data.
+
+--- R2-S56.1 field-mapping fix (P0, item 1 of SPRINT5-6_Changes_Final) ---
+
+The real `backbone.hssm.HSSMResult` (S34.7 canonical contract) does NOT
+have `regime_sequence` or `observations` fields -- it has `p_t` (MAP
+regime trajectory) and no field at all that echoes the input matrix
+back. This adapter used to hard-require the old field names and raise
+AttributeError on every real (non-mocked) call, which is the bug this
+pass fixes:
+
+  - `regime_sequence` <- `result.p_t`. `p_t` IS the MAP discrete
+    regime trajectory (see backbone/hssm/fitting.py HSSMResult
+    docstring) -- this is a rename, not a semantic change.
+  - `observations` <- the adapter's own `matrix` input, echoed back.
+    `HSSMResult` never carries the input matrix, so there is no
+    "extract from result" option; the adapter already receives
+    `matrix` as its own argument, so echoing it is the only source
+    that exists.
+
+FLAG (per S34.7 ownership -- Research ML owns the canonical export
+shape, not this adapter): this mapping is the only mapping that fits
+the data available, and is applied here so the pipeline is unblocked,
+but it has NOT received a formal Research ML sign-off. If a future
+`HSSMResult` revision adds a real `observations`-equivalent field (e.g.
+because `p_t` alone is judged insufficient for context-signature
+purposes) this mapping must be revisited then, not assumed permanent.
 """
 
 from __future__ import annotations
@@ -42,8 +68,8 @@ class HSSMAdapterOutput:
     from the real HSSMResult. Kept as its own type (rather than reusing
     the retired SyntheticHSSMOutput) so nothing in production code can
     accidentally import the test-fixture dataclass."""
-    regime_sequence: np.ndarray   # (T,) int
-    observations: np.ndarray      # (T, F) float, NaN = missing session
+    regime_sequence: np.ndarray   # (T,) int -- sourced from HSSMResult.p_t
+    observations: np.ndarray      # (T, F) float, NaN = missing session -- echoed input matrix
 
 
 def _import_fit_hssm():
@@ -63,25 +89,37 @@ def _import_fit_hssm():
 
 def get_hssm_output(matrix: np.ndarray) -> HSSMAdapterOutput:
     """Real call to backbone.hssm.fit_hssm(matrix) -> HSSMResult, no
-    local re-implementation of HSSM logic. Extracts the two fields
-    context_signature.py needs.
+    local re-implementation of HSSM logic. Extracts/derives the two
+    fields context_signature.py needs.
 
     Raises BackboneHSSMUnavailableError if backbone.hssm isn't
-    installed, and AttributeError (with a clear message) if a
-    real HSSMResult is missing an expected field -- never silently
-    substitutes synthetic data for a missing/broken real result."""
-    fit_hssm = _import_fit_hssm()
-    result = fit_hssm(matrix)
+    installed, and AttributeError (with a clear message) if a real
+    HSSMResult is missing the field this mapping depends on -- never
+    silently substitutes synthetic data.
 
-    for field in ("regime_sequence", "observations"):
-        if not hasattr(result, field):
-            raise AttributeError(
-                f"backbone.hssm.fit_hssm's HSSMResult is missing expected "
-                f"field '{field}' -- adapter contract mismatch, escalate "
-                f"to Research ML (S34.7 owns the canonical export shape)."
-            )
+    Field mapping (see module docstring's R2-S56.1 section for why):
+      regime_sequence <- result.p_t
+      observations    <- echoed input `matrix` (HSSMResult carries no
+                          input-echo field of its own)
+    """
+    fit_hssm = _import_fit_hssm()
+
+    # Echo the input up front, in whatever numeric form context_signature.py
+    # expects (float array, NaN = missing session) -- this is the adapter's
+    # own argument, not something read off the result.
+    input_matrix = np.asarray(matrix, dtype=float)
+
+    result = fit_hssm(input_matrix)
+
+    if not hasattr(result, "p_t") or result.p_t is None:
+        raise AttributeError(
+            "backbone.hssm.fit_hssm's HSSMResult is missing expected "
+            "field 'p_t' (MAP regime trajectory) -- adapter contract "
+            "mismatch, escalate to Research ML (S34.7 owns the "
+            "canonical export shape)."
+        )
 
     return HSSMAdapterOutput(
-        regime_sequence=np.asarray(result.regime_sequence),
-        observations=np.asarray(result.observations),
+        regime_sequence=np.asarray(result.p_t),
+        observations=input_matrix,
     )

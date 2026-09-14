@@ -173,3 +173,21 @@ def test_gate_can_opt_into_entropy_metric_via_regime_probabilities():
     assert result_variance["condition_3_detail"]["met"] is True
     assert result_entropy["condition_3_detail"]["metric"] == "regime_posterior_entropy"
     assert result_entropy["condition_3_detail"]["met"] is True
+
+def test_is_stabilizing_result_tagged_not_doctrine_correct():
+    """item 3 mechanical sub-fix: raw-variance results must be
+    self-describing so nothing downstream can treat them as equivalent
+    to the entropy metric by accident."""
+    from phase_transition.stability import RegimeStability
+    import numpy as np
+
+    np.random.seed(0)
+    data = np.concatenate([
+        np.random.normal(0, 3, 20),
+        np.random.normal(0, 0.3, 20),
+    ]).tolist()
+
+    stability = RegimeStability(min_days=20)
+    result = stability.is_stabilizing(data, 0)
+    assert result["valid"] is True
+    assert result["metric"] == "raw_value_variance_NOT_DOCTRINE_CORRECT"

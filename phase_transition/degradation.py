@@ -1,5 +1,10 @@
 import numpy as np
-from scipy.stats import norm
+
+from phase_transition.diagnostics.scalar_gaussian_degradation import (
+    PredictiveFitDegradation,
+)
+
+__all__ = ["evaluate_generative_model_degradation", "PredictiveFitDegradation"]
 
 # HONESTY FLAG (S56.2): doctrine requires testing whether the ACTUAL
 # fitted behavioral generative model (HSSM/domain representation)
@@ -8,9 +13,16 @@ from scipy.stats import norm
 # the null/seasonal baseline is senior-owned (Ownership Model:
 # "Harnesses" tier). `evaluate_generative_model_degradation` below is
 # the harness: it accepts pluggable fit/predict functions so a senior
-# can wire the real HSSM in without touching harness plumbing. The
-# PredictiveFitDegradation class below remains the (documented-generic)
-# current implementation -- not removed, not silently promoted.
+# can wire the real HSSM in without touching harness plumbing.
+#
+# RELOCATED (item 4 / R2-S56.4 mechanical sub-fix, this pass): the
+# generic scalar-Gaussian `PredictiveFitDegradation` implementation now
+# physically lives in `phase_transition/diagnostics/`, per the doc's
+# "keep the scalar-Gaussian path only under diagnostics/" ask -- it is
+# re-exported here ONLY for backward compatibility with existing
+# imports (`from phase_transition.degradation import
+# PredictiveFitDegradation`); do not add new logic to this module for
+# it, edit `diagnostics/scalar_gaussian_degradation.py` instead.
 #
 # See phase_transition/hssm_degradation.py for a best-effort
 # regime-conditional fit_fn/predict_ll_fn pair built on top of this
@@ -31,6 +43,8 @@ def evaluate_generative_model_degradation(
     pre_window: int = 20,
     post_window: int = 20,
     null_baseline_ll_fn=None,
+    model_id: str | None = None,
+    model_version: str | None = None,
 ) -> dict:
     """Harness (S56.2, Harnesses tier). Held-out predictive-likelihood
     evaluation, generic over the model:
@@ -41,6 +55,13 @@ def evaluate_generative_model_degradation(
         e.g. a seasonal/naive baseline log-lik for comparison. Senior
         defines what 'appropriate null' means; harness just plumbs it
         through if supplied.
+
+    model_id / model_version (item 4 / R2-S56.4 mechanical sub-fix,
+    this pass): caller-supplied identifiers persisted verbatim into the
+    result dict so a decision record can never carry an anonymous
+    model. The harness does not invent or validate these -- it only
+    refuses to silently drop them; omitting both leaves `model_id=None`
+    visible in the result rather than fabricating a default.
 
     Records exact pre/post window boundaries in machine-readable form
     (S56.2 Test Sheet T2) for the reproducibility manifest. Does NOT
@@ -77,6 +98,8 @@ def evaluate_generative_model_degradation(
 
     result = {
         "valid": True,
+        "model_id": model_id,
+        "model_version": model_version,
         "post_predictive_ll": float(post_ll),
         "post_predictive_ll_per_sample": float(post_ll) / len(post_data),
         **window_info,
@@ -88,68 +111,3 @@ def evaluate_generative_model_degradation(
         result["ll_vs_null_baseline"] = float(post_ll) - float(null_ll)
 
     return result
-
-
-class PredictiveFitDegradation:
-    """
-    Condition 2 of 3 for phase-transition gate.
-    Fits a simple Gaussian model on pre-boundary window, tests its
-    predictive log-likelihood on post-boundary window. Sharp degradation
-    = evidence the underlying regime actually changed, not just noise.
-
-    HONESTY FLAG (S56.2): this is a generic scalar-Gaussian fit, not the
-    actual fitted HSSM/domain generative model doctrine calls for. See
-    `evaluate_generative_model_degradation` for the real-model harness.
-    """
-
-    def __init__(self, min_window: int = 10):
-        self.min_window = min_window
-
-    def fit_window(self, data: np.ndarray) -> dict:
-        """Fit Gaussian (mean, std) on a window of data."""
-        return {"mean": float(np.mean(data)), "std": float(np.std(data) + 1e-8)}
-
-    def log_predictive_likelihood(self, model: dict, data: np.ndarray) -> float:
-        """Total log-likelihood of data under a fitted model."""
-        return float(np.sum(norm(model["mean"], model["std"]).logpdf(data)))
-
-    def degradation_score(self, data: list[float], candidate_t: int,
-                            pre_window: int = 20, post_window: int = 20) -> dict:
-        """
-        Fit on [candidate_t - pre_window, candidate_t), test log predictive
-        likelihood on [candidate_t, candidate_t + post_window).
-        Returns per-sample degradation: how much worse (more negative)
-        the post-boundary log-likelihood is vs in-sample expectation.
-        """
-        data = np.asarray(data)
-        pre_start = max(0, candidate_t - pre_window)
-        post_end = min(len(data), candidate_t + post_window)
-
-        if candidate_t - pre_start < self.min_window or post_end - candidate_t < self.min_window:
-            return {"valid": False, "reason": "insufficient window"}
-
-        pre_data = data[pre_start:candidate_t]
-        post_data = data[candidate_t:post_end]
-
-        model = self.fit_window(pre_data)
-
-        in_sample_ll = self.log_predictive_likelihood(model, pre_data) / len(pre_data)
-        out_sample_ll = self.log_predictive_likelihood(model, post_data) / len(post_data)
-
-        degradation = in_sample_ll - out_sample_ll  # positive = degraded fit
-
-        return {
-            "valid": True,
-            "in_sample_ll_per_sample": in_sample_ll,
-            "out_sample_ll_per_sample": out_sample_ll,
-            "degradation": degradation,
-        }
-
-    def is_degraded(self, data: list[float], candidate_t: int,
-                      pre_window: int = 20, post_window: int = 20,
-                      threshold: float = 2.0) -> bool:
-        """Condition 2 gate: True if predictive fit degraded past threshold."""
-        result = self.degradation_score(data, candidate_t, pre_window, post_window)
-        if not result["valid"]:
-            return False
-        return result["degradation"] > threshold

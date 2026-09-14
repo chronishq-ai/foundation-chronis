@@ -94,3 +94,58 @@ def test_declared_transitions_accepts_timestamps_end_to_end():
     # so results should match -- proves the plumbing doesn't change
     # behavior for the common dense case, only for sparse ones.
     assert declared_no_ts == declared_with_ts
+
+def test_require_regime_probabilities_raises_when_omitted():
+    """item 3 mechanical sub-fix: a gate that opts into
+    require_regime_probabilities=True must refuse to silently fall
+    back to the raw-variance stability metric."""
+    from phase_transition.stability import AmbiguousStabilityMetricError
+
+    np.random.seed(42)
+    pre = np.random.normal(0, 1, 100)
+    post = np.array([np.random.normal(5, max(0.3, 3 - 0.15 * i)) for i in range(80)])
+    signal = np.concatenate([pre, post]).tolist()
+
+    gate = PhaseTransitionGate(require_regime_probabilities=True)
+    try:
+        gate.evaluate_candidate(signal, 100)
+        assert False, "expected AmbiguousStabilityMetricError"
+    except AmbiguousStabilityMetricError:
+        pass
+
+
+def test_require_regime_probabilities_passes_when_supplied():
+    """Same strict gate, but regime_probabilities supplied -> uses the
+    entropy path normally, no exception."""
+    np.random.seed(42)
+    pre = np.random.normal(0, 1, 100)
+    post = np.array([np.random.normal(5, max(0.3, 3 - 0.15 * i)) for i in range(80)])
+    signal = np.concatenate([pre, post]).tolist()
+
+    pre_probs = [[0.25, 0.25, 0.25, 0.25]] * 100
+    post_probs = []
+    for i in range(80):
+        peak = 0.25 + min(0.74, 0.74 * i / 13)
+        rest = (1 - peak) / 3
+        post_probs.append([peak, rest, rest, rest])
+    regime_probabilities = pre_probs + post_probs
+
+    gate = PhaseTransitionGate(require_regime_probabilities=True)
+    result = gate.evaluate_candidate(
+        signal, 100, regime_probabilities=regime_probabilities)
+    assert result["condition_3_detail"]["metric"] == "regime_posterior_entropy"
+
+
+def test_require_regime_probabilities_defaults_false_unchanged_behavior():
+    """Default (False) must be byte-for-byte identical to pre-existing
+    behavior -- this flag is additive/opt-in only."""
+    np.random.seed(3)
+    pre = np.random.normal(0, 1, 100)
+    spike = np.random.normal(5, 1, 10)
+    revert = np.random.normal(0, 1, 90)
+    signal = np.concatenate([pre, spike, revert]).tolist()
+
+    gate_default = PhaseTransitionGate()
+    gate_explicit_false = PhaseTransitionGate(require_regime_probabilities=False)
+    assert (gate_default.declared_transitions(signal)
+            == gate_explicit_false.declared_transitions(signal))
