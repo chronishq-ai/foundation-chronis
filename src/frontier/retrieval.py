@@ -46,8 +46,13 @@ class RetrievalAPI:
         """
         Calculates confidence combining ANN distance with corroborating signals.
         All thresholds must be configurable and logged to MLflow.
+
+        Note: ann_distance is squared-L2. For normalized embeddings:
+          cosine_similarity = 1 - d²/2
+        We use that as the base confidence (VF-03 / F12 fix — consistent with
+        multimodal_assistant.py).
         """
-        base_conf = max(0.0, 1.0 - ann_distance)
+        base_conf = max(0.0, 1.0 - ann_distance / 2.0)
 
         if gps_match:
             base_conf += 0.15
@@ -87,7 +92,7 @@ class RetrievalAPI:
                 "timestamp": res.get("timestamp_ntp"),
                 "confidence": confidence,
                 "canonical_record_pointer": res.get("canonical_record_pointer"),
-                "owner_user_id": user_id,   # enforce ownership tag on output
+                "owner_user_id": res.get("user_id"),   # resolve/pass through from canonical stored metadata
             })
 
         ranked_results.sort(key=lambda x: x["confidence"], reverse=True)
@@ -125,7 +130,7 @@ class RetrievalAPI:
         matching = []
         for entry in index.entries:
             # Each entry must belong to this user (ownership enforced at store time)
-            if entry.get("user_id") and entry["user_id"] != user_id:
+            if not entry.get("user_id") or entry["user_id"] != user_id:
                 logger.error(
                     "SECURITY: visual index for user '%s' contains entry owned by '%s'. "
                     "This should never happen. Entry skipped.",
@@ -142,7 +147,7 @@ class RetrievalAPI:
                     "timestamp": ts,
                     "type": query_type,
                     "salience_level": entry.get("salience_level"),
-                    "owner_user_id": user_id,
+                    "owner_user_id": entry.get("user_id"),   # resolve from canonical stored metadata, not from requester
                 })
 
         # Sort chronologically

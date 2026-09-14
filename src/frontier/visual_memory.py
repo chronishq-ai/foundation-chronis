@@ -58,8 +58,7 @@ class SelfHostedCLIPEncoder:
         elif isinstance(frame_data, Image.Image):
             image = frame_data.convert("RGB")
         else:
-            # fallback to a blank image
-            image = Image.new("RGB", (224, 224))
+            raise TypeError(f"Unsupported frame_data type: {type(frame_data).__name__}. Cannot encode into visual memory.")
             
         inputs = self.processor(images=image, return_tensors="pt").to(self.device)
         with torch.no_grad():
@@ -95,7 +94,10 @@ class DeterministicTestEncoder:
         self.dimension = dimension
 
     def encode(self, frame_data: Any) -> np.ndarray:
+        from PIL import Image
         import hashlib
+        if not isinstance(frame_data, (bytes, str, Image.Image)):
+            raise TypeError(f"Unsupported frame_data type: {type(frame_data).__name__}. Cannot encode into visual memory.")
         h = hashlib.sha256(str(frame_data).encode("utf-8")).digest()
         rng = np.random.default_rng(seed=int.from_bytes(h[:8], "big"))
         vec = rng.random(self.dimension).astype("float32")
@@ -178,7 +180,7 @@ class VisualMemoryIndex:
         
         results = []
         for dist, idx in zip(distances[0], indices[0]):
-            if idx < len(self.entries):
+            if 0 <= idx < len(self.entries):
                 res = dict(self.entries[idx])
                 res["ann_distance"] = float(dist)
                 results.append(res)

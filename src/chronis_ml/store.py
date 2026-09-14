@@ -4,6 +4,8 @@ from __future__ import annotations
 import ast
 import json
 import re
+import os
+import tempfile
 from pathlib import Path
 
 USER_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
@@ -79,14 +81,31 @@ class IsolatedModelStore:
     def read(self, uid: str, path: Path) -> bytes:
         return check_path(uid, path, self.root).read_bytes()
 
-    def put_base(self, ckpt: str, data: bytes) -> Path:
+    def put_base(self, ckpt: str, data: bytes, requesting_user_id: str = None, policy_engine=None, overwrite: bool = False) -> Path:
+        if policy_engine is None or not requesting_user_id:
+            raise PermissionError("Unauthenticated: requesting_user_id and policy_engine are required.")
+        if not policy_engine.check_access(requesting_user_id, "base_model_write", required_tier=3):
+            raise PermissionError(f"User {requesting_user_id} not authorized to write Class A base models.")
+            
         d = shared_dir(ckpt, self.root)
         d.mkdir(parents=True, exist_ok=True)
         w = d / "weights.bin"
-        w.write_bytes(data)
-        (d / "MANIFEST.json").write_text(
-            json.dumps({"class": "A", "checkpoint_id": ckpt}), encoding="utf-8"
-        )
+        
+        if w.exists() and not overwrite:
+            raise FileExistsError("Base model already exists. Overwrite requires explicit authorization.")
+            
+        # Write atomically
+        fd, temp_path = tempfile.mkstemp(dir=d)
+        with os.fdopen(fd, 'wb') as f:
+            f.write(data)
+        os.replace(temp_path, w)
+        
+        manifest_path = d / "MANIFEST.json"
+        fd_m, temp_m_path = tempfile.mkstemp(dir=d)
+        with os.fdopen(fd_m, 'w', encoding="utf-8") as f:
+            json.dump({"class": "A", "checkpoint_id": ckpt}, f)
+        os.replace(temp_m_path, manifest_path)
+        
         return w
 
     def load_base(self, ckpt: str) -> bytes:

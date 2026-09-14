@@ -130,7 +130,7 @@ class MemoryOrchestrator:
                 "content_pointer": v.get("canonical_record_pointer"),
                 "confidence": v.get("confidence", 0.0),
                 "source": "visual_index",
-                "owner_user_id": v.get("owner_user_id", user_id),
+                "owner_user_id": v.get("owner_user_id"),
             }
             # Carry through timestamp if present
             if v.get("timestamp"):

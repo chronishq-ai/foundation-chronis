@@ -144,16 +144,16 @@ class ConflictManager:
                 f"Conflict '{conflict_id}' not found. Cannot apply teach correction."
             )
 
-        # --- 2. Conflict must belong to caller ---
-        if conflict.user_id and conflict.user_id != user_id:
+        # --- 2. Conflict must belong to caller (fail-closed: missing user_id = deny) ---
+        if not conflict.user_id or conflict.user_id != user_id:
             raise PermissionError(
                 f"CROSS-USER VIOLATION: conflict '{conflict_id}' belongs to "
                 f"'{conflict.user_id}', not '{user_id}'."
             )
 
-        # --- 3. New belief must belong to caller ---
+        # --- 3. New belief must belong to caller (fail-closed: missing user_id = deny) ---
         new_belief_user = getattr(new_belief, "user_id", "")
-        if new_belief_user and new_belief_user != user_id:
+        if not new_belief_user or new_belief_user != user_id:
             raise PermissionError(
                 f"CROSS-USER VIOLATION: new_belief.user_id='{new_belief_user}' "
                 f"does not match caller '{user_id}'."

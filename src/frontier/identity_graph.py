@@ -193,7 +193,7 @@ class PrivateIdentityGraph:
     def get_entity_by_name(
         self,
         name: str,
-        requesting_user_id: Optional[str] = None,
+        requesting_user_id: str,
     ) -> List[IdentityNode]:
         """
         Retrieves internal entity records by explicit name.
@@ -205,10 +205,13 @@ class PrivateIdentityGraph:
         requesting_user_id must match self.user_id.  Cross-user reads raise
         PermissionError (R2-F20.4).
 
-        requesting_user_id is optional only for legacy call sites inside the
-        same process that already hold the correct graph object.
+        A non-empty requesting_user_id is REQUIRED. There is no legacy bypass path;
+        the former Optional[str] = None signature allowed ownership checks to be
+        skipped entirely (VF-10 remediation).
         """
-        if requesting_user_id is not None and requesting_user_id != self.user_id:
+        if not requesting_user_id:
+            raise PermissionError("Unauthenticated read of identity graph is forbidden.")
+        if requesting_user_id != self.user_id:
             raise PermissionError(
                 f"CROSS-USER ISOLATION: user '{requesting_user_id}' cannot read "
                 f"identity graph owned by '{self.user_id}'."
@@ -217,7 +220,7 @@ class PrivateIdentityGraph:
         for node in self.nodes.values():
             if node.name is not None and node.name.lower() == name.lower():
                 # Double-check node-level ownership (defence in depth)
-                if requesting_user_id is not None and node.user_id != requesting_user_id:
+                if node.user_id != requesting_user_id:
                     raise PermissionError(
                         f"NODE-LEVEL CROSS-USER: node '{node.entity_id}' belongs to "
                         f"'{node.user_id}', not '{requesting_user_id}'."
@@ -225,9 +228,25 @@ class PrivateIdentityGraph:
                 result.append(node)
         return result
 
-    def get_unresolved_nodes(self) -> List[IdentityNode]:
+    def get_unresolved_nodes(self, requesting_user_id: str) -> List[IdentityNode]:
         """Returns all nodes with name=None (unknown persons)."""
-        return [n for n in self.nodes.values() if n.name is None]
+        if not requesting_user_id:
+            raise PermissionError("Unauthenticated read of identity graph is forbidden.")
+        if requesting_user_id != self.user_id:
+            raise PermissionError(
+                f"CROSS-USER ISOLATION: user '{requesting_user_id}' cannot read "
+                f"identity graph owned by '{self.user_id}'."
+            )
+        result = []
+        for node in self.nodes.values():
+            if node.name is None:
+                if node.user_id != requesting_user_id:
+                    raise PermissionError(
+                        f"NODE-LEVEL CROSS-USER: node '{node.entity_id}' belongs to "
+                        f"'{node.user_id}', not '{requesting_user_id}'."
+                    )
+                result.append(node)
+        return result
 
     # ------------------------------------------------------------------
     # Merge (anti-pattern — cross-user is forbidden)

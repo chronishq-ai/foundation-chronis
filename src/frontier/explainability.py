@@ -54,7 +54,7 @@ class ExplainabilityAPI:
 
         # 2. Verify ownership
         claim_user = getattr(claim, "user_id", None)
-        if claim_user and claim_user != requesting_user_id:
+        if not claim_user or claim_user != requesting_user_id:
             return {"error": "Access denied: claim belongs to a different user"}
 
         # 3. Walk canonical provenance

@@ -36,17 +36,17 @@ class PersonalLM:
     def __init__(self, store: IsolatedModelStore) -> None:
         self.store = store
 
-    def ensure_base(self) -> str:
+    def ensure_base(self, requesting_user_id: str = None, policy_engine=None) -> str:
         p = shared_dir(BASE, self.store.root) / "weights.bin"
         if not p.exists():
             w = np.random.default_rng(7).normal(0, 0.02, 32).astype(np.float32)
-            self.store.put_base(BASE, w.tobytes())
+            self.store.put_base(BASE, w.tobytes(), requesting_user_id=requesting_user_id, policy_engine=policy_engine)
         return BASE
 
-    def fine_tune(self, uid: str, transcripts: list[str], steps: int = 50, lr: float = 0.05) -> FineTuneResult:
+    def fine_tune(self, uid: str, transcripts: list[str], steps: int = 50, lr: float = 0.05, policy_engine=None) -> FineTuneResult:
         if not transcripts:
             raise ValueError("need transcripts")
-        self.ensure_base()
+        self.ensure_base(requesting_user_id=uid, policy_engine=policy_engine)
         base = np.frombuffer(self.store.load_base(BASE), dtype=np.float32).copy()
         vec = np.zeros_like(base)
         for t in transcripts:

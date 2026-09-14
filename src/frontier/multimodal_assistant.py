@@ -107,6 +107,12 @@ class MultimodalAssistant:
         if self.visual_index_provider is None:
             return {"status": "visual_index_not_configured", "error": True}
 
+        # --- CRC Boundary Fallback: Policy Engine Check ---
+        if self.policy_engine and not self.policy_engine.check_access(
+            user_id, "personal_retrieval", required_tier=2
+        ):
+            return {"status": "error", "error": "Access denied by policy engine"}
+
         visual_index = self.visual_index_provider(user_id)
         if visual_index is None:
             return {"status": "no_visual_index_for_user"}
@@ -116,9 +122,17 @@ class MultimodalAssistant:
             return {"status": "no_confident_match", "reason": "no entries in index"}
 
         best = results[0]
+        
+        # --- CRC Boundary Fallback: Ownership Verification ---
+        owner = best.get("user_id")
+        if not owner or owner != user_id:
+            return {
+                "status": "error", 
+                "error": f"CROSS-USER VIOLATION: evidence item owner {owner!r} does not match requesting user {user_id!r}."
+            }
         # ann_distance is L2; convert to rough similarity (lower distance = more similar)
         distance = best.get("ann_distance", 1.0)
-        similarity = max(0.0, 1.0 - distance)
+        similarity = max(0.0, 1.0 - distance / 2.0)
 
         if similarity < VISUAL_MATCH_THRESHOLD:
             return {
