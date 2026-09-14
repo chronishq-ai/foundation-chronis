@@ -1,5 +1,5 @@
 """
-CHRONIS — Team 4 (INVENTORS) — Sprint 7, Day 19
+CHRONIS — Team 4 (INVENTORS) — Sprint 7, Day 19 (P0 audit fix)
 Weak-Supervision Label Layer (WSL) for the Narrative State-Space Model (NSSM)
 
 WHAT THIS FILE DOES, IN PLAIN ENGLISH
@@ -25,6 +25,36 @@ heteroskedastic NSSM emission model — i.e. the NSSM should trust
 high-confidence sessions more than shaky ones. sigma_t here comes directly
 from the label model's own uncertainty about the aggregated call, not from
 a fixed constant (per the Global Standard: "no silent magic numbers").
+
+IDIOLECT NORMALIZATION (P0 audit fix)
+--------------------------------------
+A fixed keyword-count threshold (e.g. "low_tolerance if >=2 absolutist
+words") is itself a silent magic number with respect to the SPEAKER: a
+person whose baseline speech is naturally hyperbolic ("I ALWAYS...",
+"completely...") will trip an absolutism LF on totally ordinary sessions,
+and a naturally hedgy/passive speaker will trip a hedging LF the same way —
+both are false positives caused by comparing the person against a global
+threshold instead of against themselves.
+
+`SessionInput.idiolect_baseline` is Sprint 2's per-person baseline: a dict
+of `{"<trait>_rate_multiplier": float}` entries describing how this
+person's own baseline usage of that trait compares to the population
+(e.g. `{"absolutism_rate_multiplier": 1.5}` means this person uses
+absolutist language 1.5x more than baseline just as their normal idiolect,
+so the bar for calling it a *meaningful* signal must rise by the same
+factor). Every lexical LF whose vote depends on a static keyword-count
+threshold multiplies that threshold by the relevant baseline multiplier
+before comparing — never the other way around, and never applied to the
+raw keyword count itself, so the multiplier's semantics stay exactly
+"how much higher does the bar need to be for this person," not "how much
+should we inflate or deflate what they said."
+
+`idiolect_baseline` is `Optional[dict]` and a requested key may simply not
+be present yet (Sprint 2 ships baselines trait-by-trait, not all at once).
+Every lookup is defensive: `None` baseline, missing key, or a
+non-numeric value all fall back to a multiplier of `1.0` — i.e. behave
+exactly like the old static threshold — rather than raising or silently
+disabling the LF.
 
 HARD CONSTRAINTS FROM THE DIRECTIVE (Sprint 7 Day 19)
 -------------------------------------------------------
@@ -108,11 +138,44 @@ class SessionInput:
     `prosody_features` is intentionally Optional[dict]: Sprint 2 owns that
     extractor, and Sprint 7 must degrade gracefully (i.e. abstain) if it's
     not wired in yet.
+
+    `idiolect_baseline` is also Sprint 2's, and also Optional[dict]: a
+    per-person map of `{"<trait>_rate_multiplier": float}` (e.g.
+    `{"absolutism_rate_multiplier": 1.5, "hedging_rate_multiplier": 0.7}`)
+    describing how this person's own baseline usage of a lexical trait
+    compares to the population baseline. Lexical LFs with a static
+    keyword-count threshold use `get_idiolect_multiplier` (below) to scale
+    that threshold per-person instead of applying one global number to
+    everyone.
     """
     session_id: str
     transcript: str  # wearer-only transcript (never the other-speaker text)
     prosody_features: Optional[dict] = None  # [REQUIRES SPRINT 2 PROSODY EXTRACTOR]
     idiolect_baseline: Optional[dict] = None  # person-specific baseline, also Sprint 2
+
+
+def get_idiolect_multiplier(s: SessionInput, trait_key: str, default: float = 1.0) -> float:
+    """
+    Defensive lookup for a per-person threshold multiplier.
+
+    `s.idiolect_baseline` is Optional, and even when present it's built up
+    trait-by-trait by Sprint 2, so any single key may simply not exist yet.
+    Every failure mode here — `idiolect_baseline is None`, the key missing,
+    or a value that isn't actually numeric — falls back to `default`
+    (1.0, i.e. "behave exactly like the old static threshold"), never
+    raises, and never silently disables the calling LF.
+    """
+    if s.idiolect_baseline is None:
+        return default
+    raw_value = s.idiolect_baseline.get(trait_key, default)
+    try:
+        return float(raw_value)
+    except (TypeError, ValueError):
+        logger.warning(
+            "idiolect_baseline[%r]=%r on session %s is not numeric; falling back to multiplier=%.1f",
+            trait_key, raw_value, s.session_id, default,
+        )
+        return default
 
 
 # ---------------------------------------------------------------------------
@@ -355,9 +418,22 @@ def lf_temporal_verb_tense(s: SessionInput) -> int:
 
 
 def lf_temporal_future_markers(s: SessionInput) -> int:
-    """Failure mode: only ever votes future or abstains — deliberately narrow."""
+    """
+    Failure mode: only ever votes future or abstains — deliberately narrow.
+
+    Idiolect-normalized: someone whose baseline speech is naturally
+    future-oriented ("I'm gonna...", "next year I'll...", as a verbal tic
+    rather than genuine future-self content) needs a proportionally higher
+    bar before this counts as REAL future-dominant framing, not just their
+    normal way of talking. `future_orientation_rate_multiplier` scales the
+    static threshold accordingly; absent a baseline entry it defaults to
+    1.0, i.e. the original fixed threshold of 2.
+    """
     classes = _classes(NarrativeDimension.TEMPORAL_FRAMING)
-    if _keyword_hits(s.transcript, ["i will", "i'm going to", "next year", "in the future"]) >= 2:
+    future_hits = _keyword_hits(s.transcript, ["i will", "i'm going to", "next year", "in the future"])
+    multiplier = get_idiolect_multiplier(s, "future_orientation_rate_multiplier")
+    threshold = 2 * multiplier
+    if future_hits >= threshold:
         return classes.index("future_dominant")
     return ABSTAIN
 
@@ -437,17 +513,39 @@ def lf_arc_llm(s: SessionInput, llm: SelfHostedLLMClient) -> int:
 
 # --- 7. CONTRADICTION_TOLERANCE --------------------------------------------
 def lf_contradiction_hedging(s: SessionInput) -> int:
+    """
+    Idiolect-normalized: a naturally hedgy/passive speaker ("on the other
+    hand...", "part of me...") uses this vocabulary as their normal
+    baseline register, not as genuine evidence of holding contradictory
+    stances open. `hedging_rate_multiplier` scales the static threshold
+    (originally a fixed >=1) up for such speakers so the LF requires
+    proportionally more hedging language before it counts as signal.
+    Missing/None baseline defaults the multiplier to 1.0 — i.e. unchanged
+    behavior.
+    """
     classes = _classes(NarrativeDimension.CONTRADICTION_TOLERANCE)
     hedges = _keyword_hits(s.transcript, ["on the other hand", "but also", "i'm torn", "part of me"])
-    if hedges >= 1:
+    multiplier = get_idiolect_multiplier(s, "hedging_rate_multiplier")
+    threshold = 1 * multiplier
+    if hedges >= threshold:
         return classes.index("high_tolerance")
     return ABSTAIN
 
 
 def lf_contradiction_absolutism(s: SessionInput) -> int:
+    """
+    Idiolect-normalized: a naturally hyperbolic speaker ("always",
+    "completely", "definitely") uses absolutist words as their normal
+    baseline register, not as genuine evidence of low tolerance for
+    contradiction. `absolutism_rate_multiplier` scales the static
+    threshold (originally a fixed >=2) up for such speakers. Missing/None
+    baseline defaults the multiplier to 1.0 — i.e. unchanged behavior.
+    """
     classes = _classes(NarrativeDimension.CONTRADICTION_TOLERANCE)
     absolutes = _keyword_hits(s.transcript, ["always", "never", "completely", "no doubt", "definitely"])
-    if absolutes >= 2:
+    multiplier = get_idiolect_multiplier(s, "absolutism_rate_multiplier")
+    threshold = 2 * multiplier
+    if absolutes >= threshold:
         return classes.index("low_tolerance")
     return ABSTAIN
 
@@ -833,6 +931,37 @@ class WeakSupervisionLabelLayer:
 # STEP 6 — Minimal end-to-end demo on synthetic sessions.
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
+    # --- Standalone proof that idiolect normalization actually changes an
+    # LF's vote: identical transcript, evaluated once with no baseline
+    # (old static-threshold behavior) and once with a hyperbolic-speaker
+    # baseline (new dynamic-threshold behavior). ---
+    hyperbolic_transcript = (
+        "I always give it my all, and I'm never one to quit halfway through."
+    )
+    session_no_baseline = SessionInput(
+        session_id="idiolect_demo_no_baseline",
+        transcript=hyperbolic_transcript,
+        idiolect_baseline=None,
+    )
+    session_with_hyperbolic_baseline = SessionInput(
+        session_id="idiolect_demo_hyperbolic_baseline",
+        transcript=hyperbolic_transcript,
+        # This person's baseline absolutism rate is 1.5x the population's —
+        # i.e. "always"/"never"-type words are just how they normally talk.
+        idiolect_baseline={"absolutism_rate_multiplier": 1.5},
+    )
+    vote_no_baseline = lf_contradiction_absolutism(session_no_baseline)
+    vote_with_baseline = lf_contradiction_absolutism(session_with_hyperbolic_baseline)
+    print("=== Idiolect normalization smoke test (lf_contradiction_absolutism) ===")
+    print(f"transcript: {hyperbolic_transcript!r}")
+    print(f"idiolect_baseline=None                                  -> vote={vote_no_baseline} "
+          f"({'low_tolerance' if vote_no_baseline != ABSTAIN else 'ABSTAIN'}, static threshold=2)")
+    print(f"idiolect_baseline={{'absolutism_rate_multiplier': 1.5}}   -> vote={vote_with_baseline} "
+          f"({'low_tolerance' if vote_with_baseline != ABSTAIN else 'ABSTAIN'}, normalized threshold=3)")
+    assert vote_no_baseline != ABSTAIN, "expected the static-threshold case to fire on 2 absolutist hits"
+    assert vote_with_baseline == ABSTAIN, "expected the normalized threshold (3) to suppress the same 2 hits"
+    print("PASSED — identical text, different vote, purely from idiolect_baseline.\n")
+
     synthetic_sessions = [
         SessionInput(
             session_id="s1",
@@ -857,6 +986,20 @@ if __name__ == "__main__":
                 "to see myself doing something completely different someday."
             ),
             prosody_features=None,  # simulates Sprint 2 not wired in yet for this session
+        ),
+        SessionInput(
+            session_id="s4_hyperbolic_idiolect",
+            transcript=(
+                "I always give it my all, and I'm never one to quit halfway through. "
+                "I chose this job because it always felt right to me."
+            ),
+            prosody_features={"f0_contour_z": 0.4, "energy_envelope_z": 0.2},
+            # Per Sprint 2: this wearer's baseline absolutism rate runs 1.5x
+            # population, and their hedging rate runs a bit below baseline.
+            idiolect_baseline={
+                "absolutism_rate_multiplier": 1.5,
+                "hedging_rate_multiplier": 0.8,
+            },
         ),
     ]
 

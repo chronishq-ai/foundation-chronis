@@ -309,10 +309,33 @@ class ConformalCalibrator:
             logger.warning("No gold checks available for %s; returning maximally conservative qhat=1.0", dimension.value)
             return 1.0, False
 
-        # The classic split-conformal quantile: ceil((n+1)*(1-alpha))/n,
-        # clipped to 1.0 in the small-sample edge case.
-        q_level = min(1.0, np.ceil((n + 1) * self.target_coverage) / n)
-        qhat = float(np.quantile(scores, q_level, method="higher"))
+        # CRITICAL FIX (P0 audit): the split-conformal quantile is defined
+        # directly over the RANK of the sorted calibration scores — it is
+        # NOT the same thing as an np.quantile() call at some fractional
+        # probability level. np.quantile interpolates over (n-1) gaps
+        # between sorted points (even with method="higher", it still
+        # resolves its quantile level against an (n-1)-based position),
+        # which silently returns a different, non-conservative value than
+        # the one the conformal guarantee is actually derived from. The
+        # correct procedure operates on the 1-indexed RANK k directly:
+        #     k = ceil((n + 1) * target_coverage)
+        #     qhat = sorted_scores[k - 1]   (k, converted to a 0-index)
+        # and if k > n there is provably not enough calibration data to
+        # support the requested coverage at all — the correct response is
+        # to fail closed with the maximum possible nonconformity score
+        # (qhat = 1.0, i.e. "keep every class"), never to silently clip
+        # the level down to something the data happens to support.
+        sorted_scores = np.sort(scores)
+        k = int(np.ceil((n + 1) * self.target_coverage))
+        if k > n:
+            logger.warning(
+                "Only %d gold check(s) for %s; not enough calibration data to support "
+                "target_coverage=%.2f (need k=%d <= n=%d) -> failing closed with qhat=1.0",
+                n, dimension.value, self.target_coverage, k, n,
+            )
+            qhat = 1.0
+        else:
+            qhat = float(sorted_scores[k - 1])
         return qhat, was_person_specific
 
     def predict_set(
