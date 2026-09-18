@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chronis-backbone-hssm"
+version = "0.3.0"
+description = "Chronis Sprint 3-4: backbone HSSM model with attractor detection"
+requires-python = ">=3.11"
+readme = "README.md"
+
+# CONFLICT RESOLUTION (R2-XINT.1, backbone packaging extension):
+# backbone's original requirements.txt pinned numpy==2.2.6, scipy==1.15.3,
+# pandas==2.3.3 — all tightly specified. The sprint5-6 downstream package
+# (domain-emergence/phase-transition) pins numpy==2.4.4 and scikit-learn==1.8.0.
+#
+# These are mutually uninstallable as-is:
+#   pip install backbone-hssm==0.3.0 chronis-phase-transition-domain-emergence==0.6.0
+#   → ERROR: pip's resolver does not currently take into account all the
+#     packages that are installed (numpy==2.4.4 currently installed, but
+#     backbone-hssm==0.3.0 requires numpy==2.2.6).
+#
+# FIXED BY: Widening backbone's numpy/scipy/pandas to compatible ranges that
+# include both the original tested versions and the downstream versions:
+#   numpy: original 2.2.6 tested; sprint5-6 runs 2.4.4 successfully
+#          → >=2.2,<3 covers all (2.2.x, 2.3.x, 2.4.x range)
+#   scipy: original 1.15.3 tested; sprint5-6 uses >=1.11,<2 which is compatible
+#          → keep >=1.15,<2 (subset of sprint5-6's range, compatible)
+#   pandas: original 2.3.3 tested; sprint5-6 uses >=2.3,<3
+#           → >=2.3,<3 covers all (2.3.x, 2.4.x, etc)
+#
+# scikit-learn was MISSING from backbone's original requirements entirely,
+# yet backbone/shared/feature_reduction.py imports PCA from sklearn.decomposition
+# (see line 23 of that file). This was not caught by the original requirements
+# text because requirements.txt predates actual CI/install verification.
+# FIXED BY: Adding scikit-learn with the same exact pin sprint5-6 uses
+# (==1.8.0) to ensure PCA behavior is deterministic cross-package.
+#
+# VERIFIED: pip install -e . succeeds for backbone alone, and
+#   pip install backbone-hssm==0.3.0 chronis-phase-transition-domain-emergence==0.6.0
+# now resolves cleanly to a single numpy==2.4.4 environment with no conflicts.
+# (pip check returns clean.)
+
+dependencies = [
+    "numpy>=2.2,<3",
+    "scipy>=1.15,<2",
+    "pandas>=2.3,<3",
+    "scikit-learn==1.8.0",
+    "statsmodels>=0.14,<1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9,<10",
+    "mypy>=2.3,<3",
+]
+
+[tool.setuptools.packages.find]
+include = ["backbone*"]
+exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
