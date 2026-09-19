@@ -14,7 +14,6 @@ from __future__ import annotations
 import numpy as np
 
 from backbone.hssm.config import DEFAULT_COLD_START_CONFIG, ColdStartConfig
-from backbone.hssm.fitting import fit_with_random_restarts
 
 
 class ColdStartError(Exception):
@@ -34,32 +33,36 @@ def count_present_sessions(X: np.ndarray) -> int:
 
 def fit_hssm_gated(
     X: np.ndarray,
-    n_regimes: int,
-    n_features: int,
+    n_regimes: int = 3,
+    n_features: int = 1,
     n_present_sessions: int | None = None,
     config: ColdStartConfig = DEFAULT_COLD_START_CONFIG,
     n_init: int = 10,
     max_duration: int = 45,
     base_seed: int = 0,
     timestamps: np.ndarray | None = None,
+    min_present_sessions: int | None = None,
 ):
-    """Wraps fit_with_random_restarts with the cold-start gate. Raises
-    ColdStartError below config.min_present_sessions; fits normally at/above it."""
-    if n_features <= 0 or (X.ndim >= 2 and X.shape[1] == 0):
+    """Wraps canonical fit_hssm for backward compatibility.
+    ColdStartError is raised by canonical fit_hssm below config.min_present_sessions."""
+    if n_features <= 0:
         raise ValueError("Feature count must be strictly greater than zero (F > 0)")
 
-    if n_present_sessions is None:
-        n_present_sessions = count_present_sessions(X)
+    if min_present_sessions is not None:
+        config = ColdStartConfig(min_present_sessions=min_present_sessions)
 
-    if n_present_sessions < config.min_present_sessions:
-        raise ColdStartError(
-            f"{n_present_sessions} present sessions < cold-start minimum "
-            f"({config.min_present_sessions}). No HSSM output produced. This "
-            f"is the correct, silent, no-output state per Bible 5.1 doctrine, "
-            f"not a low-confidence result."
-        )
+    from backbone.hssm.fitting import fit_hssm
 
-    return fit_with_random_restarts(
-        X, n_regimes=n_regimes, n_features=n_features, n_init=n_init,
-        max_duration=max_duration, base_seed=base_seed, timestamps=timestamps,
+    res = fit_hssm(
+        matrix=X,
+        candidate_ks=(n_regimes,),
+        n_initializations=n_init,
+        random_seed=base_seed,
+        allow_fast_test_fit=(n_init < 10),
+        timestamps=timestamps,
+        config=config,
+        n_present_sessions=n_present_sessions,
+        max_duration=max_duration,
     )
+    return res.model, res.convergence_metadata.get("run_log", [])
+

@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 from backbone.hssm.gating import fit_hssm_gated, ColdStartError, count_present_sessions
+from backbone.hssm.fitting import fit_hssm, HSSMResult
 from backbone.hssm.model import GaussianHSMM
 
 
@@ -156,3 +157,51 @@ def test_missing_session_preserved_and_gate_recomputed_correctly():
     assert count_present_sessions(X) == 35 - len(missing_idx)
     # array itself must still literally contain the NaNs (nothing upstream imputed them)
     assert np.all(np.isnan(X[missing_idx]))
+
+
+# ---------- VF-14: Canonical fit_hssm() Cold-Start Gate Acceptance Tests ----------
+
+def test_vf14_t1_fit_hssm_direct_29_sessions_raises_cold_start():
+    """T1 (VF-14): Call canonical fit_hssm() directly with 29 eligible sessions -> ColdStartError."""
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(29, 5))
+    assert count_present_sessions(X) == 29
+    with pytest.raises(ColdStartError):
+        fit_hssm(X, candidate_ks=(2,), n_initializations=10, random_seed=1)
+
+
+def test_vf14_t2_fit_hssm_direct_30_sessions_succeeds():
+    """T2 (VF-14): Call canonical fit_hssm() directly with 30 eligible sessions -> succeeds."""
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(30, 5))
+    assert count_present_sessions(X) == 30
+    res = fit_hssm(X, candidate_ks=(2,), n_initializations=10, random_seed=1)
+    assert isinstance(res, HSSMResult)
+    assert res.model._is_fitted
+    assert res.selected_k == 2
+
+
+def test_vf14_t3_fit_hssm_direct_31_sessions_succeeds():
+    """T3 (VF-14): Call canonical fit_hssm() directly with 31 eligible sessions -> succeeds."""
+    rng = np.random.default_rng(1)
+    X = rng.normal(size=(31, 5))
+    assert count_present_sessions(X) == 31
+    res = fit_hssm(X, candidate_ks=(2,), n_initializations=10, random_seed=1)
+    assert isinstance(res, HSSMResult)
+    assert res.model._is_fitted
+    assert res.selected_k == 2
+
+
+def test_vf14_t4_fit_hssm_gated_wrapper_boundary_parity():
+    """T4 (VF-14): Confirm fit_hssm_gated() wrapper exhibits identical boundary behavior."""
+    rng = np.random.default_rng(1)
+    X29 = rng.normal(size=(29, 5))
+    with pytest.raises(ColdStartError):
+        fit_hssm_gated(X29, n_regimes=2, n_features=5, n_init=10, base_seed=1)
+
+    X30 = rng.normal(size=(30, 5))
+    model, run_log = fit_hssm_gated(X30, n_regimes=2, n_features=5, n_init=10, base_seed=1)
+    assert model is not None
+    assert model._is_fitted
+    assert len(run_log) == 10
+

@@ -28,6 +28,16 @@ def canonicalize_labels(model) -> object:
     model.var = model.var[order]
     model.dur_mu = model.dur_mu[order]
     model.dur_sigma = model.dur_sigma[order]
+    if hasattr(model, "duration_optimizer_success_") and model.duration_optimizer_success_:
+        model.duration_optimizer_success_ = {
+            new_k: model.duration_optimizer_success_.get(int(old_k), True)
+            for new_k, old_k in enumerate(order)
+        }
+    if hasattr(model, "duration_optimizer_messages_") and model.duration_optimizer_messages_:
+        model.duration_optimizer_messages_ = {
+            new_k: model.duration_optimizer_messages_.get(int(old_k), "")
+            for new_k, old_k in enumerate(order)
+        }
     model._label_order_applied = order.tolist()
     return model
 

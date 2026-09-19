@@ -27,12 +27,25 @@ emission log-likelihood contributes 0 for that timestep — skipped, never imput
 """
 
 from __future__ import annotations
+from enum import Enum
+import warnings
 import numpy as np
 from scipy.special import logsumexp
 from scipy.stats import lognorm
 from scipy.optimize import minimize
 
 NEG_INF = -1e10
+
+
+class FitState(str, Enum):
+    """Explicit state of the HSMM EM fitting routine."""
+    RUNNING = "RUNNING"
+    CONVERGED = "CONVERGED"
+    REJECTED_UPDATE = "REJECTED_UPDATE"
+    NUMERICAL_FAILURE = "NUMERICAL_FAILURE"
+    MAX_ITER_REACHED = "MAX_ITER_REACHED"
+    FAILED = "FAILED"
+    MODEL_SELECTION_CONTESTED = "MODEL_SELECTION_CONTESTED"
 
 
 class HSSMError(Exception):
@@ -57,14 +70,27 @@ class InternalStateError(HSSMError, RuntimeError):
 
 
 class GaussianHSMM:
-    def __init__(self, n_regimes: int, n_features: int, max_duration: int = 40, seed: int | None = None):
-        if n_regimes <= 0:
+    def __init__(
+        self,
+        n_regimes: int | None = None,
+        n_features: int | None = None,
+        max_duration: int = 40,
+        seed: int | None = None,
+        K: int | None = None,
+        Dmax: int | None = None,
+        duration_unit: str = "sessions",
+    ):
+        k_val = K if K is not None else n_regimes
+        f_val = n_features
+        dmax_val = Dmax if Dmax is not None else max_duration
+
+        if k_val is None or k_val <= 0:
             raise ValueError("Number of regimes must be strictly positive (K > 0)")
-        if n_features <= 0:
+        if f_val is not None and f_val <= 0:
             raise ValueError("Number of features must be strictly positive (F > 0)")
-        self.K = n_regimes
-        self.F = n_features
-        self.Dmax = max_duration
+        self.K = k_val
+        self.F = f_val if f_val is not None else 0
+        self.Dmax = dmax_val
         self.rng = np.random.default_rng(seed)
 
         self.pi: np.ndarray | None = None
@@ -76,11 +102,27 @@ class GaussianHSMM:
 
         self.log_likelihood_: float | None = None
         self.log_likelihood_history_: list[float] = []
-        self.converged_: bool = False
+        self.fit_state_: FitState = FitState.FAILED
         self.n_iter_: int = 0
         self.convergence_rate_: float = 0.0
-        self.duration_unit: str = "sessions"
+        self.duration_unit: str = duration_unit
         self._is_fitted: bool = False
+        self.duration_optimizer_success_: dict[int, bool] = {}
+        self.duration_fallback_used_: bool = False
+        self.duration_optimizer_messages_: dict[int, str] = {}
+
+    @property
+    def converged_(self) -> bool:
+        """Backward-compatible boolean indicating genuine convergence."""
+        return self.fit_state_ == FitState.CONVERGED
+
+    @converged_.setter
+    def converged_(self, value: bool) -> None:
+        if value:
+            self.fit_state_ = FitState.CONVERGED
+        else:
+            if self.fit_state_ == FitState.CONVERGED:
+                self.fit_state_ = FitState.FAILED
 
     def _require_fitted(self) -> None:
         if not getattr(self, "_is_fitted", False):
@@ -126,6 +168,9 @@ class GaussianHSMM:
         mu_ln = np.log(mean_dwell_guess) - 0.5 * 0.5**2
         self.dur_mu = np.full(K, mu_ln) + self.rng.normal(scale=0.3, size=K)
         self.dur_sigma = np.full(K, 0.5) + self.rng.uniform(0.0, 0.2, size=K)
+        self.duration_optimizer_success_ = {k: True for k in range(K)}
+        self.duration_fallback_used_ = False
+        self.duration_optimizer_messages_ = {k: "Initialized" for k in range(K)}
 
 
     def _duration_logpmf(self) -> np.ndarray:
@@ -265,6 +310,9 @@ class GaussianHSMM:
     # ---------- EM ----------
 
     def fit(self, X: np.ndarray, n_iter: int = 100, tol: float = 1e-4, verbose: bool = False, timestamps: np.ndarray | None = None) -> "GaussianHSMM":
+        self.fit_state_ = FitState.RUNNING
+        self.log_likelihood_history_ = []
+        self._n_observations = len(X)
         if timestamps is not None:
             X_fit = self._build_calendar_grid(X, timestamps)
             self.duration_unit = "calendar_days"
@@ -274,6 +322,7 @@ class GaussianHSMM:
 
         self._init_params(X_fit)
         prev_params = None
+        prev_ll = None
         for it in range(n_iter):
             regime_post, entry_post, xi_counts = self._forward_backward(X_fit)
             if self.log_likelihood_ is None:
@@ -285,28 +334,33 @@ class GaussianHSMM:
                 print(f"  iter {it}: log-likelihood = {ll:.3f}")
 
             if np.isnan(ll) or np.isinf(ll):
-                self.converged_ = False
+                self.fit_state_ = FitState.NUMERICAL_FAILURE
                 self.n_iter_ = it
                 self._is_fitted = True
                 return self
 
             if it > 0 and abs(ll - prev_ll) < tol:
-                self.converged_ = True
+                self.fit_state_ = FitState.CONVERGED
                 self.n_iter_ = it
                 break
 
-            if it > 0 and ll < prev_ll - 1e-4 and prev_params is not None:
-                print(
-                    f"[EM Monotonicity Guard] Violation at iteration {it}: "
-                    f"log-likelihood decreased from {prev_ll:.6f} to {ll:.6f} (delta = {ll - prev_ll:.6f}). "
-                    f"Rejecting update and restoring previous parameters."
-                )
-                self.pi, self.A, self.mu, self.var, self.dur_mu, self.dur_sigma = prev_params
-                self.log_likelihood_ = prev_ll
-                self.log_likelihood_history_[-1] = prev_ll
-                self.converged_ = True
-                self.n_iter_ = it
-                break
+            if it > 0 and ll < prev_ll - 1e-4:
+                if prev_params is not None:
+                    print(
+                        f"[EM Monotonicity Guard] Violation at iteration {it}: "
+                        f"log-likelihood decreased from {prev_ll:.6f} to {ll:.6f} (delta = {ll - prev_ll:.6f}). "
+                        f"Rejecting update and restoring previous parameters."
+                    )
+                    self.pi, self.A, self.mu, self.var, self.dur_mu, self.dur_sigma, self.duration_optimizer_success_, self.duration_fallback_used_, self.duration_optimizer_messages_ = prev_params
+                    self.log_likelihood_ = prev_ll
+                    self.log_likelihood_history_.append(prev_ll)
+                    self.fit_state_ = FitState.REJECTED_UPDATE
+                    self.n_iter_ = it
+                    break
+                else:
+                    self.fit_state_ = FitState.FAILED
+                    self.n_iter_ = it
+                    break
 
             prev_params = (
                 self.pi.copy(),
@@ -315,11 +369,14 @@ class GaussianHSMM:
                 self.var.copy(),
                 self.dur_mu.copy(),
                 self.dur_sigma.copy(),
+                self.duration_optimizer_success_.copy(),
+                self.duration_fallback_used_,
+                self.duration_optimizer_messages_.copy(),
             )
             prev_ll = ll
             self._m_step(X_fit, regime_post, entry_post, xi_counts)
         else:
-            self.converged_ = False
+            self.fit_state_ = FitState.MAX_ITER_REACHED
             self.n_iter_ = n_iter
 
         self._is_fitted = True
@@ -380,9 +437,22 @@ class GaussianHSMM:
             if res.success:
                 self.dur_mu[k] = float(res.x[0])
                 self.dur_sigma[k] = float(res.x[1])
+                self.duration_optimizer_success_[k] = True
+                self.duration_optimizer_messages_[k] = str(getattr(res, "message", "Optimization terminated successfully"))
             else:
                 self.dur_mu[k] = init_mu
                 self.dur_sigma[k] = init_sigma
+                self.duration_optimizer_success_[k] = False
+                self.duration_fallback_used_ = True
+                msg = str(getattr(res, "message", "Optimization failed to converge"))
+                self.duration_optimizer_messages_[k] = msg
+                warnings.warn(
+                    f"[GaussianHSMM] Duration optimization fallback used for regime {k}: "
+                    f"L-BFGS-B did not converge ({msg}). Using untruncated moment estimate "
+                    f"(mu={init_mu:.4f}, sigma={init_sigma:.4f}).",
+                    UserWarning,
+                    stacklevel=2,
+                )
 
         # CORRECTED: exact xi-based transition matrix update (was a co-occurrence proxy)
         row_sums = xi_counts.sum(axis=1, keepdims=True)
@@ -394,16 +464,71 @@ class GaussianHSMM:
         row_sums2[row_sums2 == 0] = 1.0
         self.A = new_A / row_sums2
 
+    # ---------- model identity (baseline) ----------
+
+    @property
+    def model_identity(self) -> str:
+        """Canonical model identity string. This baseline is a slow-regime-only
+        explicit-duration HSMM — it does NOT produce fast continuous state m_t."""
+        return "ExplicitDurationSwitchingBaselineV1"
+
+    @property
+    def model_family(self) -> str:
+        return "GaussianHSMM"
+
+    @property
+    def model_capability(self) -> dict:
+        return {
+            "supports_fast_state_m_t": False,
+            "supports_slow_state_p_t": True,
+            "supports_explicit_duration": True,
+            "supports_neural_residual": False,
+            "is_production_grade_full_hssm": False,
+            "is_baseline_model": True,
+            "fast_state_supported": False,
+        }
+
+    @property
+    def fast_state_supported(self) -> bool:
+        return False
+
+    @property
+    def is_baseline_model(self) -> bool:
+        return True
+
+    @property
+    def duration_model_identity(self) -> str:
+        """Identity of the duration distribution used by the model."""
+        return "explicit_truncated_gaussian"
+
+    @property
+    def duration_unit_source(self) -> str:
+        """How duration units are derived. 'session_index' or 'calendar_days'."""
+        if self.duration_unit == "calendar_days":
+            return "calendar_days"
+        return "session_index"
+
+    # ---------- information criteria ----------
+
     def n_params(self) -> int:
         self._require_fitted()
         K, F = self.K, self.F
         return (K - 1) + K * (K - 1) + K * F + K * F + K * 2
 
-    def bic(self, n_observations: int) -> float:
+    def bic(self, n_observations: int | None = None) -> float:
         self._require_fitted()
         if self.log_likelihood_ is None:
-            raise NotFittedError("Log likelihood is None")
-        return -2 * self.log_likelihood_ + self.n_params() * np.log(n_observations)
+            raise InternalStateError("Log likelihood is None for fitted model")
+        n_obs = n_observations if n_observations is not None else getattr(self, "_n_observations", 100)
+        return -2 * self.log_likelihood_ + self.n_params() * np.log(max(n_obs, 1))
+
+    def aic(self, n_observations: int | None = None) -> float:
+        """Akaike Information Criterion. n_observations is accepted for API
+        symmetry with bic() but is not used in AIC computation."""
+        self._require_fitted()
+        if self.log_likelihood_ is None:
+            raise InternalStateError("Log likelihood is None for fitted model")
+        return -2 * self.log_likelihood_ + 2 * self.n_params()
 
     def is_log_likelihood_monotonic(self, tol: float = 1e-6) -> bool:
         """Post-fit sanity check: did log-likelihood increase (up to numerical
@@ -536,6 +661,10 @@ class KimHSSMModel(GaussianHSMM):
         self._duration_prior_str = duration_prior
         self.metadata = metadata or {}
         self._is_fitted = True
+        self.fit_state_ = FitState.CONVERGED
+        self.duration_optimizer_success_ = {k: True for k in range(n_regimes)}
+        self.duration_fallback_used_ = False
+        self.duration_optimizer_messages_ = {k: "Manual/Exact specification" for k in range(n_regimes)}
 
     @property
     def duration_prior(self) -> str:

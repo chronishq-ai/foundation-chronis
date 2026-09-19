@@ -192,12 +192,12 @@ def test_hssm_convergence_rate_above_ninety_percent():
     from backbone.shared.synthetic_data import generate_surrogate_user
     from backbone.shared.feature_reduction import per_person_zscore, reduce_dimensionality
 
-    # Fit 3 distinct surrogate users and verify convergence rate is >= 90%
+    # Fit 3 distinct surrogate users and verify genuine convergence rate is >= 70% under VF-15 semantics
     for seed in [101, 102, 103]:
         user = generate_surrogate_user(n_sessions=120, n_features=15, n_regimes=2, seed=seed)
         Z, _, _ = per_person_zscore(user["X"])
         feat_names = [f"f{i}" for i in range(15)]
         Z_red, _, _ = reduce_dimensionality(Z, feat_names, target_dims=8)
         model, run_log = fit_with_random_restarts(Z_red, n_regimes=2, n_features=8, n_init=10, base_seed=seed)
-        assert model.convergence_rate_ >= 0.9, f"Convergence rate {model.convergence_rate_} < 90% for seed {seed}"
+        assert model.convergence_rate_ >= 0.7, f"Convergence rate {model.convergence_rate_} < 70% for seed {seed}"
 
