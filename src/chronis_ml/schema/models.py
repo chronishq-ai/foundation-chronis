@@ -56,6 +56,53 @@ class FeatureRecord:
     already enforced structural validity — this field can never hold
     an invalid classification."""
 
+    observation_id: str | None = None
+    """A stable identifier for the specific raw observation this
+    record represents, assigned by the loader that produced it (e.g. a
+    source-system record ID or a UUID minted at ingestion). None by
+    default — fully backward-compatible with every existing record and
+    every existing loader that doesn't set it.
+
+    This exists so a downstream store (e.g. FeatureStore) can record a
+    real observation -> feature link instead of a free-text,
+    unvalidated description of where a value "came from" (B7's
+    traceability chain). When a loader doesn't provide one, callers can
+    fall back to `composite_key()` below as a deterministic identifier
+    — weaker than a true source-system ID (it identifies "this
+    (user, time, feature, modality) slot," not "this specific raw
+    reading," so it can't distinguish a corrected re-ingestion from the
+    original), but still real and reproducible, never fabricated.
+    """
+
+    clock_uncertainty_ms: float | None = None
+    """Estimated uncertainty, in milliseconds, in this record's
+    `timestamp` — e.g. due to device clock drift, buffered/batched
+    upload, or NTP sync error at capture time. None when the source
+    device/loader provides no such estimate; this is never inferred or
+    guessed downstream, only ever set by whatever is closest to the
+    original capture.
+    """
+
+    sync_source: str | None = None
+    """What `timestamp` was synchronized against at capture time (e.g.
+    "device_ntp", "phone_clock", "server_receipt_time"). None when
+    unknown. Exists alongside `clock_uncertainty_ms` so a consumer can
+    tell not just how uncertain a timestamp might be, but what kind of
+    clock produced it — the two are B6's "clock uncertainty and
+    synchronization metadata" requirement, previously absent from this
+    schema entirely (see `temporal_alignment.py`'s HONEST SCOPE NOTE 3).
+    """
+
+    def composite_key(self) -> tuple[str, datetime, str, str]:
+        """Deterministic fallback identifier for this record, usable as
+        an observation link when `observation_id` is not set. Matches
+        the same (user_id, timestamp, feature_name, modality) key
+        `validation.py` already uses to detect duplicate observations —
+        deliberately reusing that key rather than inventing a second,
+        possibly-inconsistent notion of "identity" for the same record.
+        """
+        return (self.user_id, self.timestamp, self.feature_name, self.modality)
+
 
 @dataclass(frozen=True, slots=True)
 class ChronisDataset:
