@@ -1,0 +1,12 @@
+# One relative path per line, plus a mandatory reason after '#'.
+# A file only belongs here if its bare `assert`(s) are genuinely
+# test-harness code that must ship outside tests/ (e.g. a reusable
+# fixture-validation utility imported by multiple test modules), never
+# because "it's guaranteed by the caller" — that exact reasoning is
+# what produced VF-01.
+#
+# Currently empty on purpose: the scan is intentionally red against
+# this branch as of this PR (see src/chronis_ml/schema/validation.py
+# and src/chronis_ml/features/asr/asr_harness.py in the CI output) so
+# a human makes an explicit call on each hit rather than the gate
+# silently starting green.

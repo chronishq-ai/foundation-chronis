@@ -35,6 +35,9 @@ jobs:
       - name: Run Ruff (format check)
         run: poetry run ruff format --check .
 
+      - name: Run production-invariant scan (Phase A4)
+        run: poetry run python tools/ci_checks/prod_invariant_scan.py
+
       - name: Run mypy
         run: poetry run mypy
 

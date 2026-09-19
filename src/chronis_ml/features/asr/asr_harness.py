@@ -32,6 +32,12 @@ class PrivacyInvariantViolation(AssertionError):
     a bystander segment's audio."""
 
 
+class IncompleteWearerCoverageError(AssertionError):
+    """Raised when a routing implementation fails to deliver every wearer
+    segment to the ASR backend, or fails to return a transcript for one —
+    i.e. the allowed-case plumbing is broken, not the privacy invariant."""
+
+
 RoutingFunction = Callable[[Sequence[DiarizedSegment], ASRBackend], dict[str, str]]
 
 
@@ -83,7 +89,16 @@ def assert_wearer_segments_reach_asr(
 
     wearer_refs = {s.audio_reference for s in segments if s.speaker_role is SpeakerRole.WEARER}
 
-    assert wearer_refs <= set(asr.calls), "not every wearer segment reached the ASR backend"
-    assert wearer_refs <= set(results.keys()), "not every wearer segment has a transcript result"
+    missing_from_calls = wearer_refs - set(asr.calls)
+    if missing_from_calls:
+        raise IncompleteWearerCoverageError(
+            f"not every wearer segment reached the ASR backend: {sorted(missing_from_calls)}"
+        )
+
+    missing_from_results = wearer_refs - set(results.keys())
+    if missing_from_results:
+        raise IncompleteWearerCoverageError(
+            f"not every wearer segment has a transcript result: {sorted(missing_from_results)}"
+        )
 
     return results

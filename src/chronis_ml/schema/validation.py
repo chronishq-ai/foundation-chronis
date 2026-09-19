@@ -153,7 +153,13 @@ def _validate_physiological_range(record: FeatureRecord) -> None:
         return
 
     lower, upper = bounds
-    assert record.value is not None  # guaranteed by caller (OBSERVED branch)
+    if record.value is None:
+        raise SchemaValidationError(
+            f"_validate_physiological_range called for feature_name="
+            f"{record.feature_name!r} with value=None; this violates the internal "
+            "contract that only OBSERVED records (which validate_record already "
+            "guarantees have a non-None value) reach this function"
+        )
 
     if not (lower <= record.value <= upper):
         raise SchemaValidationError(

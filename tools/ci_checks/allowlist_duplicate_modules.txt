@@ -1,0 +1,12 @@
+# Format: the exact "pair_key" string the scanner prints on failure,
+# one per line, plus a mandatory reason after '#'.
+#
+# Reviewed 2026-09-18: src/chronis_ml/loaders/base.py defines the
+# DatasetLoader Protocol; synthetic/generators/base.py defines the
+# unrelated StreamGenerator Protocol. Same filename by convention
+# ("the base contract for this package"), different packages, no
+# shared import path, not the §1.5 branch-duplication pattern (which
+# is two implementations competing for the SAME import path after a
+# merge). Re-review if either file grows real logic instead of a thin
+# Protocol.
+base.py: src/chronis_ml/loaders/base.py, synthetic/generators/base.py
