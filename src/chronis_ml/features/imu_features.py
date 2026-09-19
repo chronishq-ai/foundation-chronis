@@ -14,6 +14,19 @@ Required outputs, each with a corresponding test:
     FLAGGED, and downstream interpretive features (posture, cadence)
     must be marked degraded rather than confidently computed as if the
     signal were clean.
+  - Movement bouts, transition rate, and sedentary duration (B4's
+    remaining candidate feature families beyond the original five).
+
+HONEST SCOPE NOTE — sedentary duration: B4 lists "sedentary duration"
+as distinct from "stillness." A genuine actigraphy distinction between
+the two requires posture/orientation context this schema doesn't carry
+(e.g. sitting vs. standing still vs. lying down) — `IMUSample` has no
+orientation reference beyond raw x/y/z. Without that, "sedentary" is
+computed identically to `stillness_duration_seconds` (the same
+magnitude-near-gravity criterion), exposed as a separate field only so
+downstream consumers have the name B4 expects. This is flagged as an
+equivalence, not a claim that a real semantic distinction has been
+implemented.
 """
 
 from __future__ import annotations
@@ -27,6 +40,12 @@ from enum import StrEnum
 GRAVITY_G = 1.0
 """Baseline magnitude (in g) expected for a stationary device under
 gravity alone."""
+
+DEFAULT_MIN_BOUT_DURATION_SECONDS = 10.0
+"""Minimum sustained duration for a run of active samples to count as
+one movement bout, per B4's "movement bouts" family. A brief flicker
+above the stillness threshold that doesn't sustain for this long is
+noise, not a bout."""
 
 
 class SignalQuality(StrEnum):
@@ -74,6 +93,22 @@ class IMUFeatureSet:
     cadence_hz: float | None
     """None whenever no reliable cadence estimate is available (empty
     window or a DEGRADED signal) - never a fabricated number."""
+
+    sedentary_duration_seconds: float
+    """See module HONEST SCOPE NOTE — currently computed identically to
+    stillness_duration_seconds, pending orientation/context data that
+    would let the two be genuinely distinguished."""
+
+    movement_bout_count: int | None
+    """Count of maximal contiguous active-sample runs lasting at least
+    DEFAULT_MIN_BOUT_DURATION_SECONDS. None whenever a DEGRADED signal
+    makes bout detection unreliable — never a fabricated count."""
+
+    transition_rate_per_hour: float | None
+    """Rate of instantaneous still<->active transitions, normalized to
+    transitions/hour so windows of different lengths are comparable.
+    None whenever the window has zero duration or the signal is
+    DEGRADED."""
 
     quality: SignalQuality
     quality_reason: str | None
@@ -139,6 +174,64 @@ def _count_positive_zero_crossings(values: Sequence[float], baseline: float) -> 
     return crossings
 
 
+def _is_active(magnitude: float, *, stillness_tolerance_g: float) -> bool:
+    return abs(magnitude - GRAVITY_G) > stillness_tolerance_g
+
+
+def _count_movement_bouts(
+    samples: Sequence[IMUSample],
+    *,
+    stillness_tolerance_g: float,
+    min_bout_duration_seconds: float,
+) -> int:
+    """Counts maximal contiguous runs of consecutive samples classified
+    as 'active', whose duration meets or exceeds
+    min_bout_duration_seconds. A brief flicker above threshold that
+    doesn't sustain for the minimum duration is not counted as a bout.
+    """
+
+    bout_count = 0
+    run_start_index: int | None = None
+
+    for index, sample in enumerate(samples):
+        active = _is_active(sample.magnitude, stillness_tolerance_g=stillness_tolerance_g)
+        if active and run_start_index is None:
+            run_start_index = index
+        elif not active and run_start_index is not None:
+            run_duration = (
+                samples[index - 1].timestamp - samples[run_start_index].timestamp
+            ).total_seconds()
+            if run_duration >= min_bout_duration_seconds:
+                bout_count += 1
+            run_start_index = None
+
+    if run_start_index is not None:
+        run_duration = (samples[-1].timestamp - samples[run_start_index].timestamp).total_seconds()
+        if run_duration >= min_bout_duration_seconds:
+            bout_count += 1
+
+    return bout_count
+
+
+def _count_posture_transitions(
+    samples: Sequence[IMUSample], *, stillness_tolerance_g: float
+) -> int:
+    """Counts instantaneous still<->active transitions between
+    consecutive samples — a finer-grained signal than the single
+    window-level posture_state."""
+
+    transitions = 0
+    previous_active = _is_active(samples[0].magnitude, stillness_tolerance_g=stillness_tolerance_g)
+
+    for sample in samples[1:]:
+        current_active = _is_active(sample.magnitude, stillness_tolerance_g=stillness_tolerance_g)
+        if current_active != previous_active:
+            transitions += 1
+        previous_active = current_active
+
+    return transitions
+
+
 def extract_imu_features(
     user_id: str,
     samples: Sequence[IMUSample],
@@ -146,6 +239,7 @@ def extract_imu_features(
     stillness_tolerance_g: float = 0.05,
     clip_threshold_g: float = 8.0,
     stuck_run_threshold: int = 5,
+    min_bout_duration_seconds: float = DEFAULT_MIN_BOUT_DURATION_SECONDS,
 ) -> IMUFeatureSet:
     """Extract axis-aware IMU features from one window of raw samples."""
 
@@ -177,12 +271,19 @@ def extract_imu_features(
         if earlier_still and later_still:
             stillness_duration += (later.timestamp - earlier.timestamp).total_seconds()
 
+    # See module HONEST SCOPE NOTE: no orientation/context data exists
+    # to distinguish "sedentary" from generic stillness, so this is the
+    # same computation exposed under the name B4 expects.
+    sedentary_duration = stillness_duration
+
     window_duration = (samples[-1].timestamp - samples[0].timestamp).total_seconds()
 
     if quality is SignalQuality.DEGRADED:
         # Never confidently assert posture or cadence on a corrupted signal.
         posture_state = PostureState.UNKNOWN
         cadence_hz = None
+        movement_bout_count = None
+        transition_rate_per_hour = None
     else:
         if window_duration > 0 and stillness_duration >= window_duration - 1e-9:
             posture_state = PostureState.STILL
@@ -196,6 +297,20 @@ def extract_imu_features(
             cadence_hz = crossings / window_duration if crossings > 0 else None
         else:
             cadence_hz = None
+
+        movement_bout_count = _count_movement_bouts(
+            samples,
+            stillness_tolerance_g=stillness_tolerance_g,
+            min_bout_duration_seconds=min_bout_duration_seconds,
+        )
+
+        if window_duration > 0:
+            transitions = _count_posture_transitions(
+                samples, stillness_tolerance_g=stillness_tolerance_g
+            )
+            transition_rate_per_hour = transitions / (window_duration / 3600.0)
+        else:
+            transition_rate_per_hour = None
 
     return IMUFeatureSet(
         user_id=user_id,
@@ -212,6 +327,9 @@ def extract_imu_features(
         stillness_duration_seconds=stillness_duration,
         movement_intensity=movement_intensity,
         cadence_hz=cadence_hz,
+        sedentary_duration_seconds=sedentary_duration,
+        movement_bout_count=movement_bout_count,
+        transition_rate_per_hour=transition_rate_per_hour,
         quality=quality,
         quality_reason=quality_reason,
     )

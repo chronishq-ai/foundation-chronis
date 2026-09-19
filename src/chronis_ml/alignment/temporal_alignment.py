@@ -31,6 +31,16 @@ untested short-gap-tolerance behavior. If the Bible's intent is that
 short gaps (<=10 min) should be bridged by carrying forward the last
 real reading, that is a distinct, NOT-yet-built behavior - flagged
 here rather than silently assumed.
+
+HONEST SCOPE NOTE 3: B6 also requires that "clock uncertainty and
+synchronization metadata are preserved." No such metadata exists
+anywhere in the current schema (`FeatureRecord` carries no
+clock-uncertainty or sync-source field), so there is nothing for this
+function to preserve — fabricating a value here would be worse than
+omitting it. Carrying this forward requires a schema addition upstream
+(e.g. on `FeatureRecord`/`MissingnessSignals`) before `AlignedMinute`
+can honestly expose it. Flagged as an open follow-up, not implemented
+here.
 """
 
 from __future__ import annotations
@@ -38,7 +48,7 @@ from __future__ import annotations
 import statistics
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from chronis_ml.schema.models import FeatureRecord, MeasurementStatus
 
@@ -79,6 +89,23 @@ class AlignedMinute:
     that such minutes are never passed to the HSSM at all."""
 
 
+def _to_utc(timestamp: datetime) -> datetime:
+    """Normalize any timezone-aware timestamp to UTC before grid
+    arithmetic, per B6's canonical-type requirement ("timestamps use a
+    canonical type, preferably UTC-aware datetime or epoch integer").
+
+    Without this, minute-boundary flooring and bucket comparisons only
+    happen to be correct because real-world timezone offsets are whole
+    minutes — that's an accident of how time zones are defined, not a
+    guarantee this code was actually relying on. Converting explicitly
+    means `AlignedMinute.minute_start` always reports one canonical
+    zone regardless of which offset a given record arrived in, instead
+    of silently echoing whatever offset happened to belong to the
+    record that set the grid boundary.
+    """
+    return timestamp.astimezone(UTC)
+
+
 def align_to_minute_grid(
     user_id: str,
     records_by_modality: Mapping[str, Sequence[FeatureRecord]],
@@ -98,7 +125,7 @@ def align_to_minute_grid(
     )
 
     all_timestamps = [
-        record.timestamp for records in records_by_modality.values() for record in records
+        _to_utc(record.timestamp) for records in records_by_modality.values() for record in records
     ]
 
     if not all_timestamps:
@@ -124,7 +151,7 @@ def align_to_minute_grid(
                 for record in modality_records
                 if record.status is MeasurementStatus.OBSERVED
                 and record.value is not None
-                and current_bucket <= record.timestamp < bucket_end
+                and current_bucket <= _to_utc(record.timestamp) < bucket_end
             ]
 
             if bucket_values:
@@ -158,7 +185,7 @@ def align_to_minute_grid(
 
 
 def _floor_to_minute(timestamp: datetime) -> datetime:
-    return timestamp.replace(second=0, microsecond=0)
+    return _to_utc(timestamp).replace(second=0, microsecond=0)
 
 
 def select_for_downstream(aligned_minutes: Sequence[AlignedMinute]) -> tuple[AlignedMinute, ...]:
