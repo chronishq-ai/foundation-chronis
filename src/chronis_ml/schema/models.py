@@ -93,6 +93,38 @@ class FeatureRecord:
     schema entirely (see `temporal_alignment.py`'s HONEST SCOPE NOTE 3).
     """
 
+    rest_state: str | None = None
+    """Whether the wearer was at rest/asleep when this reading was
+    captured — e.g. "resting", "sleep", "active". None when unknown.
+    Exists so a PPG baseline can be restricted to rest/sleep-only
+    readings per B2 ("PPG -> rest/sleep-only... baseline"); without
+    this field, `normalizer.py` had no way to distinguish a resting
+    heart-rate reading from one taken mid-exercise when building a
+    personal baseline. Set by whatever pipeline stage can determine
+    wearer state (e.g. from IMU features) — never guessed here.
+    """
+
+    signal_quality: str | None = None
+    """Signal-quality flag (SQI) for this specific reading — e.g.
+    "clean", "degraded". None when the source has no quality
+    assessment. Exists so a PPG baseline can be gated on quality per B2
+    ("PPG -> ...+ SQI gating") — this is a per-FeatureRecord quality
+    signal, distinct from `feature_store`'s `quality` table, which
+    tracks quality of a *derived* feature value rather than a raw
+    observation.
+    """
+
+    activity_context: str | None = None
+    """A coarse activity-context tag for this reading — e.g.
+    "sedentary", "walking", "running". None when unknown. Exists so a
+    motion baseline can be restricted to matching-context history per
+    B2 ("motion -> context-aware baseline... never comparing running
+    motion with sedentary baselines"). Deliberately a free-form string
+    rather than an enum for now, since the real set of contexts this
+    schema needs to support isn't yet finalized — narrowing it to an
+    enum prematurely would be guessing at that decision.
+    """
+
     def composite_key(self) -> tuple[str, datetime, str, str]:
         """Deterministic fallback identifier for this record, usable as
         an observation link when `observation_id` is not set. Matches

@@ -28,25 +28,32 @@ BASELINE REGISTRY (B2 requirement): the Bible requires family-specific
 baseline policy — at minimum, a longer rolling window for prosody, a
 rest/sleep-only + SQI-gated baseline for PPG, and a context-aware
 baseline for motion (never comparing running against a sedentary
-baseline). This module implements the part of that requirement the
-current schema can actually support:
+baseline). This module implements all three:
 
   - A `FeatureFamily` classification and a `BaselinePolicy` registry
     keyed by family, so prosody, PPG, and motion features each get
     their own window/min-required-days instead of one constant applied
     to everything.
+  - PPG baselines are filtered to `rest_state in ("resting", "sleep")`
+    and `signal_quality == "clean"` — a record with either field unset
+    is excluded, not assumed to qualify.
+  - Motion baselines are filtered to `activity_context` matching the
+    target's own context, when the target has one recorded.
 
-HONEST SCOPE NOTE: the other two required policies — PPG "rest/sleep-
-only + SQI gating" and motion "context-aware baseline" (excluding
-running samples from a sedentary baseline) — are NOT implemented here,
-because they require data this schema does not carry. `FeatureRecord`
-has no rest/sleep-state flag, no SQI/signal-quality field, and no
-activity-context field to filter on (the same gap already flagged in
-`temporal_alignment.py`'s SQI note). Filtering `history` by rest state
-or activity context is impossible without that data existing somewhere
-upstream. This is flagged as an open follow-up requiring a schema
-change, not fabricated here by guessing at a context signal that
-doesn't exist.
+HONEST SCOPE NOTE: this depends entirely on `rest_state`,
+`signal_quality`, and `activity_context` actually being populated on
+`FeatureRecord` by whatever produces it (loaders, upstream pipeline
+stages). Those fields were only just added to the schema and nothing
+populates them yet. It also depends on the caller explicitly passing
+`family=FeatureFamily.PPG_RESTING` (or `.MOTION`) — content gating does
+NOT activate from name-based auto-classification alone, precisely
+because a caller using a feature name informally (e.g. a test using
+"heart_rate" as a placeholder for generic z-score math, not real PPG
+data) must not have its baseline silently gated on fields it never
+opted into. A real production caller that knows its own feature
+catalog should declare the family explicitly to get gating; until it
+does, both are real, tested behaviors — they're just not active by
+default.
 """
 
 from __future__ import annotations
@@ -222,6 +229,17 @@ def normalize_value(
         min_required_days if min_required_days is not None else policy.min_required_days
     )
 
+    # Content-gating filters below (rest/SQI for PPG, activity-context
+    # for motion) activate only when the caller EXPLICITLY passes
+    # `family` — name-based auto-classification alone is too weak a
+    # signal to justify silently filtering a caller's baseline down to
+    # nothing. A caller using a name like "heart_rate" as a placeholder
+    # for something that isn't real PPG data (e.g. a unit test of the
+    # core z-score math) must not have its baseline gated on fields it
+    # never intended to opt into. A caller that actually knows this is
+    # real PPG/motion data should say so via `family=`.
+    family_was_explicit = family is not None
+
     baseline_window_end = target.timestamp
     baseline_window_start = target.timestamp - resolved_window
 
@@ -237,6 +255,43 @@ def normalize_value(
         and record.value is not None
         and baseline_window_start <= record.timestamp < baseline_window_end
     ]
+
+    # Family-specific baseline filtering (B2): restrict the candidate
+    # pool beyond the generic backward-looking window, per family
+    # policy. Applied here (after the generic filter, before the
+    # min-required-days check) so insufficient-baseline correctly
+    # reflects "not enough *qualifying* history," not just "not enough
+    # history of any kind."
+    if family_was_explicit and resolved_family is FeatureFamily.PPG_RESTING:
+        # Rest/sleep-only + SQI gating: a record with no rest_state or
+        # signal_quality recorded cannot be confirmed to qualify, so it
+        # is excluded rather than assumed to pass — silently treating
+        # unknown as "resting and clean" would defeat the point of
+        # gating in the first place.
+        baseline_records = [
+            record
+            for record in baseline_records
+            if record.rest_state in ("resting", "sleep") and record.signal_quality == "clean"
+        ]
+    elif (
+        family_was_explicit
+        and resolved_family is FeatureFamily.MOTION
+        and target.activity_context is not None
+    ):
+        # Context-aware baseline: only compare against history from a
+        # matching activity context (never running against sedentary).
+        # If the target itself has no activity_context recorded, this
+        # filter cannot be applied — falling back to the unfiltered
+        # pool rather than raising, since MOTION already has no
+        # required-field check elsewhere in this module. That fallback
+        # is a real, documented limitation: without activity_context
+        # data, context-aware filtering silently degrades to the old
+        # unfiltered behavior for that record.
+        baseline_records = [
+            record
+            for record in baseline_records
+            if record.activity_context == target.activity_context
+        ]
 
     distinct_days = {record.timestamp.date() for record in baseline_records}
 
