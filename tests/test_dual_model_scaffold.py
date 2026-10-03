@@ -115,3 +115,41 @@ def test_dual_model_information_criteria_and_monotonicity():
     assert not np.isnan(aic_val)
     assert len(model.log_likelihood_history_) > 0
     assert model.n_params() > 0
+
+
+def test_dual_model_slow_regime_parameters_update_during_em():
+    """Verify that A_slow, dur_mu, and dur_sigma actively update and learn during EM fitting."""
+    from data.synthetic_dual import generate_synthetic_dual_timescale_data
+    
+    data = generate_synthetic_dual_timescale_data(
+        n_regimes=3,
+        n_features=3,
+        latent_dim=2,
+        n_segments=6,
+        mean_dwell=15.0,
+        seed=101,
+    )
+    
+    model = DualTimescaleHSSM(
+        n_regimes=3,
+        n_features=3,
+        latent_dim=2,
+        max_duration=30,
+        seed=101,
+    )
+    model._init_params(data.X)
+    init_A_slow = model.A_slow.copy()
+    init_dur_mu = model.dur_mu.copy()
+    init_dur_sigma = model.dur_sigma.copy()
+    
+    model.fit(data.X, n_iter=10)
+    
+    # Assert parameters are NOT identical to initial values
+    assert not np.allclose(model.A_slow, init_A_slow), "A_slow failed to update during EM fit"
+    assert not np.allclose(model.dur_mu, init_dur_mu), "dur_mu failed to update during EM fit"
+    assert not np.allclose(model.dur_sigma, init_dur_sigma), "dur_sigma failed to update during EM fit"
+    
+    # Assert slow transition matrix constraints
+    assert np.allclose(np.diag(model.A_slow), 0.0), "A_slow diagonal must remain zero"
+    assert np.allclose(model.A_slow.sum(axis=1), np.ones(3)), "A_slow rows must sum to 1"
+

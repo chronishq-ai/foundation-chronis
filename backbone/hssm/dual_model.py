@@ -103,6 +103,7 @@ class DualTimescaleHSSM:
         self._n_observations: int = 0
         self.duration_fallback_used_: bool = False
         self.duration_optimizer_success_: dict[int, bool] = {}
+        self.duration_optimizer_messages_: dict[int, str] = {}
 
     # ---------- Model Identity & Capabilities ----------
 
@@ -173,6 +174,7 @@ class DualTimescaleHSSM:
         self.dur_sigma = np.full(K, 0.5) + self.rng.uniform(0.0, 0.1, size=K)
         self.duration_optimizer_success_ = {k: True for k in range(K)}
         self.duration_fallback_used_ = False
+        self.duration_optimizer_messages_ = {k: "Initialized" for k in range(K)}
 
         # Fast continuous state dynamics
         # Stable AR(1) dynamics with slight persistence (A ~ 0.8 * I)
@@ -226,16 +228,32 @@ class DualTimescaleHSSM:
     # ---------- Kim Filter (GPB2 Collapse) & Semi-Markov Integration ----------
 
     def _forward_pass(self, X: np.ndarray):
-        """Kim (1994) GPB2 filter combined with semi-Markov duration state.
+        """Kim (1994) GPB2 filter combined with semi-Markov duration forward pass."""
+        regime_post, entry_post, xi_counts, m_filt, P_filt, m_pred, P_pred, emis_loglik, entry_mass = (
+            self._forward_backward_full(X)
+        )
+        return regime_post, entry_mass, m_filt, P_filt, m_pred, P_pred, emis_loglik
+
+    def _forward_backward(self, X: np.ndarray):
+        """Combined GPB2 filter and semi-Markov forward-backward recursion."""
+        regime_post, entry_post, xi_counts, m_filt, P_filt, m_pred, P_pred, emis_loglik, entry_mass = (
+            self._forward_backward_full(X)
+        )
+        return regime_post, entry_post, xi_counts, m_filt, P_filt, m_pred, P_pred
+
+    def _forward_backward_full(self, X: np.ndarray):
+        """Kim (1994) GPB2 filter combined with exact semi-Markov forward-backward recursion.
 
         Returns:
-          regime_posterior: (T, K)
-          entry_posterior: (T, K)
-          filtered_m: (T, K, L)
-          filtered_P: (T, K, L, L)
-          pred_m: (T, K, L)
-          pred_P: (T, K, L, L)
+          regime_posterior: (T, K) smoothed regime probabilities
+          entry_posterior: (T, K, D) smoothed entry/duration probabilities
+          xi_counts: (K, K) expected regime transition counts
+          m_filt: (T, K, L)
+          P_filt: (T, K, L, L)
+          m_pred: (T, K, L)
+          P_pred: (T, K, L, L)
           emis_loglik: (T, K)
+          entry_mass: (T, K, D)
         """
         T, K, L, D = X.shape[0], self.K, self.L, self.Dmax
         dur_logpmf = self._duration_logpmf()
@@ -305,7 +323,7 @@ class DualTimescaleHSSM:
                     branch_ll[i] = ll_ij
 
                 # GPB2 collapse weight w(i|j) = Pr(p_{t-1}=i, p_t=j | Y_{1:t-1})
-                log_w = completing if j != 0 else completing
+                log_w = completing
                 w_weights = np.exp(log_w - logsumexp(log_w)) if not np.all(np.isneginf(log_w)) else np.full(K, 1.0 / K)
 
                 # Collapsed state for regime j
@@ -328,14 +346,41 @@ class DualTimescaleHSSM:
 
         self.log_likelihood_ = float(logsumexp(alpha[-1]))
 
-        # Posterior regime distribution
-        regime_post = np.zeros((T, K))
-        for t in range(T):
-            alpha_t_k = logsumexp(alpha[t], axis=1)  # (K,)
-            denom = logsumexp(alpha_t_k)
-            regime_post[t] = np.exp(alpha_t_k - denom)
+        # Backward recursion for discrete semi-Markov variables
+        beta = np.full((T, K, D), NEG_INF)
+        beta[-1] = 0.0
+        future_entry_val = np.full((T, K), NEG_INF)
 
-        return regime_post, entry_mass, m_filt, P_filt, m_pred, P_pred, emis_loglik
+        for t in range(T - 2, -1, -1):
+            fut = logsumexp(beta[t + 1] + emis_loglik[t + 1][:, None] + dur_logpmf, axis=1)
+            future_entry_val[t + 1] = fut
+
+            cont_term = np.full((K, D), NEG_INF)
+            cont_term[:, 1:D] = beta[t + 1, :, : D - 1] + emis_loglik[t + 1][:, None]
+
+            trans_out = logsumexp(logA + fut[None, :], axis=1)
+            end_term = np.full((K, D), NEG_INF)
+            end_term[:, 0] = trans_out
+
+            beta[t] = np.logaddexp(cont_term, end_term)
+
+        gamma_log = alpha + beta - self.log_likelihood_
+        gamma = np.exp(np.clip(gamma_log, -700, 0))
+        regime_posterior = gamma.sum(axis=2)
+
+        entry_posterior_log = entry_mass + beta + emis_loglik[:, :, None] - self.log_likelihood_
+        entry_posterior = np.exp(np.clip(entry_posterior_log, -700, 0))
+
+        # Exact xi(k, k') aggregated over t
+        xi_counts = np.zeros((K, K))
+        for t in range(T - 1):
+            completing_t = alpha[t, :, 0]
+            if np.all(completing_t <= NEG_INF / 2) or np.all(future_entry_val[t + 1] <= NEG_INF / 2):
+                continue
+            xi_log_t = completing_t[:, None] + logA + future_entry_val[t + 1][None, :] - self.log_likelihood_
+            xi_counts += np.exp(np.clip(xi_log_t, -700, 0))
+
+        return regime_posterior, entry_posterior, xi_counts, m_filt, P_filt, m_pred, P_pred, emis_loglik, entry_mass
 
     def _kalman_update_regime(
         self,
@@ -367,9 +412,7 @@ class DualTimescaleHSSM:
         try:
             chol = np.linalg.cholesky(S)
             # Kalman gain K = P C^T S^{-1}
-            # Solve S x = C P -> x = S^{-1} C P
             CP = C_obs @ P_prior
-            # K_gain = (S^{-1} CP)^T
             solve_val = np.linalg.solve(chol, CP)
             K_gain = np.linalg.solve(chol.T, solve_val).T
 
@@ -453,22 +496,20 @@ class DualTimescaleHSSM:
         self,
         X: np.ndarray,
         regime_post: np.ndarray,
+        entry_post: np.ndarray,
+        xi_counts: np.ndarray,
         smoothed_m_k: np.ndarray,
         smoothed_P_k: np.ndarray,
     ) -> None:
-        """Analytical M-step for continuous and discrete model parameters."""
+        """Analytical M-step for continuous, observation, and discrete slow-regime parameters."""
         T, K, L, F = X.shape[0], self.K, self.L, self.F
 
         # 1. Update initial regime distribution
-        self.pi = np.clip(regime_post[0], 1e-4, None)
-        self.pi = self.pi / self.pi.sum()
+        self.pi = regime_post[0] / (regime_post[0].sum() + 1e-12)
 
         # 2. Update observation parameters (C_obs, d_obs, R_obs)
         for k in range(K):
             gamma_k = regime_post[:, k]  # (T,)
-            weight_sum = np.sum(gamma_k) + 1e-8
-
-            # Regression of y_t on [m_t, 1]
             for f in range(F):
                 valid = ~np.isnan(X[:, f])
                 if not np.any(valid):
@@ -479,7 +520,6 @@ class DualTimescaleHSSM:
                 M_f = smoothed_m_k[valid, k]  # (T_valid, L)
 
                 # Weighted linear regression
-                # Form [M_f, 1]
                 Phi = np.hstack([M_f, np.ones((len(M_f), 1))])  # (T_valid, L+1)
                 W_Phi = Phi * w_f[:, None]
                 lhs = W_Phi.T @ Phi + 1e-4 * np.eye(L + 1)
@@ -527,6 +567,67 @@ class DualTimescaleHSSM:
             except np.linalg.LinAlgError:
                 pass
 
+        # 4. Update duration parameters (dur_mu, dur_sigma)
+        d_vals = np.arange(1, self.Dmax + 1)
+        log_d = np.log(d_vals)
+        for k in range(K):
+            w = entry_post[:, k, :].sum(axis=0)
+            w_sum = w.sum()
+            if w_sum <= 1e-12:
+                continue
+
+            # Initial un-truncated MLE estimate as starting point
+            init_mu = float((w * log_d).sum() / (w_sum + 1e-12))
+            init_var = float((w * (log_d - init_mu) ** 2).sum() / (w_sum + 1e-12))
+            init_sigma = float(np.sqrt(max(init_var, 1e-3)))
+
+            # Exact truncated objective: maximize sum(w * log(pmf))
+            def neg_target_loglik(params: np.ndarray) -> float:
+                m, s = params[0], max(params[1], 1e-3)
+                pdf = lognorm.pdf(d_vals, s=s, scale=np.exp(m))
+                pdf_sum = pdf.sum()
+                if pdf_sum <= 0.0 or np.isnan(pdf_sum):
+                    return 1e10
+                pmf = np.clip(pdf / pdf_sum, 1e-300, None)
+                return -float(np.sum(w * np.log(pmf)))
+
+            res = minimize(
+                neg_target_loglik,
+                x0=[init_mu, init_sigma],
+                method="L-BFGS-B",
+                bounds=[(None, None), (1e-3, 5.0)],
+                options={"maxiter": 5, "ftol": 1e-2},
+            )
+            if res.success:
+                self.dur_mu[k] = float(res.x[0])
+                self.dur_sigma[k] = float(res.x[1])
+                self.duration_optimizer_success_[k] = True
+                self.duration_optimizer_messages_[k] = str(getattr(res, "message", "Optimization terminated successfully"))
+            else:
+                self.dur_mu[k] = init_mu
+                self.dur_sigma[k] = init_sigma
+                self.duration_optimizer_success_[k] = False
+                self.duration_fallback_used_ = True
+                msg = str(getattr(res, "message", "Optimization failed to converge"))
+                self.duration_optimizer_messages_[k] = msg
+                warnings.warn(
+                    f"[DualTimescaleHSSM] Duration optimization fallback used for regime {k}: "
+                    f"L-BFGS-B did not converge ({msg}). Using untruncated moment estimate "
+                    f"(mu={init_mu:.4f}, sigma={init_sigma:.4f}).",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+        # 5. Update slow transition matrix (A_slow)
+        row_sums = xi_counts.sum(axis=1, keepdims=True)
+        row_sums[row_sums == 0] = 1.0
+        new_A = xi_counts / row_sums
+        # guard: keep zero diagonal (dwell handled entirely by duration dist, not self-loops)
+        np.fill_diagonal(new_A, 0.0)
+        row_sums2 = new_A.sum(axis=1, keepdims=True)
+        row_sums2[row_sums2 == 0] = 1.0
+        self.A_slow = new_A / row_sums2
+
     # ---------- Fitting & Generalized EM ----------
 
     def fit(
@@ -565,10 +666,13 @@ class DualTimescaleHSSM:
                 self.C_obs.copy(),
                 self.d_obs.copy(),
                 self.R_obs.copy(),
+                self.duration_optimizer_success_.copy(),
+                self.duration_fallback_used_,
+                self.duration_optimizer_messages_.copy(),
             )
 
-            # E-step: Kim filter forward pass + backward smoother
-            regime_post, entry_mass, m_filt, P_filt, m_pred, P_pred, emis_ll = self._forward_pass(X)
+            # E-step: Forward-backward pass (Kalman GPB2 + discrete semi-Markov) + backward smoother
+            regime_post, entry_post, xi_counts, m_filt, P_filt, m_pred, P_pred = self._forward_backward(X)
             smoothed_m, smoothed_P, smoothed_m_k, smoothed_P_k = self._backward_smoother(
                 X, regime_post, m_filt, P_filt, m_pred, P_pred
             )
@@ -603,7 +707,10 @@ class DualTimescaleHSSM:
                     (
                         self.pi, self.A_slow, self.dur_mu, self.dur_sigma,
                         self.A_fast, self.b_fast, self.Q_fast,
-                        self.C_obs, self.d_obs, self.R_obs
+                        self.C_obs, self.d_obs, self.R_obs,
+                        self.duration_optimizer_success_,
+                        self.duration_fallback_used_,
+                        self.duration_optimizer_messages_,
                     ) = prev_params
                     self.log_likelihood_ = prev_ll
                     self.fit_state_ = FitState.REJECTED_UPDATE
@@ -613,8 +720,8 @@ class DualTimescaleHSSM:
             prev_params = snapshot
             prev_ll = ll
 
-            # M-step: Analytical update of linear-Gaussian parameters
-            self._m_step(X, regime_post, smoothed_m_k, smoothed_P_k)
+            # M-step: Analytical update of fast, slow, and observation parameters
+            self._m_step(X, regime_post, entry_post, xi_counts, smoothed_m_k, smoothed_P_k)
 
         if self.fit_state_ == FitState.RUNNING:
             self.fit_state_ = FitState.MAX_ITER_REACHED
@@ -637,7 +744,7 @@ class DualTimescaleHSSM:
           p_t_post: (T, K) regime posterior probabilities
         """
         self._require_fitted()
-        regime_post, entry_mass, m_filt, P_filt, m_pred, P_pred, emis_ll = self._forward_pass(X)
+        regime_post, entry_post, xi_counts, m_filt, P_filt, m_pred, P_pred = self._forward_backward(X)
         smoothed_m, smoothed_P, _, _ = self._backward_smoother(
             X, regime_post, m_filt, P_filt, m_pred, P_pred
         )
